@@ -755,7 +755,16 @@ runs:
         force: ${{ inputs.force-bump }}
         build: false
         changelog: ${{ inputs.changelog }}
-        vcs_release: ${{ inputs.create-release }}
+        # Force vcs_release off here. The action's `create-release` input
+        # is honoured downstream by the Publish GitHub Release step, which
+        # runs *after* image promotion so `release:published` listeners
+        # see the versioned image in the registry. Letting psr create the
+        # release inline (its default) would re-introduce the image-vs-
+        # release race for any caller using the python-semantic-release
+        # tool. The tag is still pushed here so the rest of the pipeline
+        # (image promote, version-file inject, etc.) has the tag to work
+        # with.
+        vcs_release: false
         commit: true
         directory: ${{ inputs.working-directory }}
 
@@ -1395,12 +1404,15 @@ runs:
     # `release:published` event a reliable readiness signal for the
     # versioned image, so consumers don't need arbitrary retry budgets.
     #
-    # Idempotent: paths that publish the release inside an external tool
-    # (semantic-release-npm direct push, release-please, python-semantic-
-    # release with vcs_release: true) cannot defer cleanly, so we detect
-    # the pre-existing release and emit a notice. The image-vs-release
-    # race remains for those paths until they're refactored too — track
-    # this in the action's release notes if you rely on those tools.
+    # Idempotent: a few paths still publish the release inside an
+    # external tool we don't control here — the semantic-release-npm
+    # *direct trunk stable* path (the `npx semantic-release` invocation
+    # in this very file) and release-please. For those we detect the
+    # pre-existing release and emit a notice; the image-vs-release race
+    # remains until they're refactored too. python-semantic-release
+    # used to be on this list but is no longer — we force its
+    # `vcs_release` input off so the tag is created without a release,
+    # then this step publishes once images are in place.
 
     - name: Publish GitHub Release
       if: |
