@@ -34,20 +34,36 @@ touching any manifests.
 
 ## Procedure
 
-### 1. Remove the image tag from GHCR
+### 1. Remove the image version from GHCR
 
-Find the internal version ID for the tag you want to remove:
+GHCR's data model treats a package *version* (a digest-addressed object) as
+the unit of deletion — not an individual tag. The delete API at
+`/versions/<id>` removes the version and every tag pointing at it. Before
+deleting, list the tags on the candidate version so you don't accidentally
+delete a digest that's also tagged `latest`, `staging`, or another
+release.
+
+Find the internal version ID and its tag set for the release tag you want
+to remove:
 
 ```bash
 gh api /orgs/<org>/packages/container/<image_name>/versions \
-  --jq '.[] | select(.metadata.container.tags[] == "<tag>") | .id'
+  --jq '.[]
+        | select((.metadata.container.tags // []) | index("<tag>"))
+        | {id, tags: (.metadata.container.tags // [])}'
 ```
 
-Then delete it:
+If the tag set contains only the release tag (and any throwaway tags),
+delete the version:
 
 ```bash
 gh api --method DELETE /orgs/<org>/packages/container/<image_name>/versions/<id>
 ```
+
+If the version is also tagged `latest` or another environment tag,
+**don't delete it** — re-tag `latest` (and any other shared tags) to the
+previous version's digest first, then come back and delete the rolled-back
+version.
 
 ### 2. Delete the GitHub Release
 
