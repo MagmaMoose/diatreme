@@ -193,6 +193,11 @@ Keys with `*` in `branch-map` are matched as anchored globs. Exact matches
 always win; among glob matches the longest key wins so a more specific
 pattern like `release/hotfix/*` beats `release/*`.
 
+`master` and `main` are interchangeable in the exact-match step. The map
+above uses `"main"` and works unchanged on a repo whose default branch is
+still `master` — the resolver falls back to the alias when no exact entry
+exists. Add an explicit entry for either name to override.
+
 ### Versioning notes for strict GitFlow
 
 The release tool is responsible for picking the next version on each
