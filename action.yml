@@ -637,7 +637,12 @@ runs:
           "${CACHE_ARGS[@]}" \
           --push
       env:
-        VERSION: pr-${{ github.event.pull_request.number }}
+        # SemVer-compatible prerelease form. .NET MSBuild and many other
+        # version parsers reject `pr-<N>` as a "valid version string", and
+        # downstream Dockerfiles often propagate VERSION into the build
+        # context. `0.0.0-pr.<N>` keeps the same human-readable PR-N
+        # identifier while satisfying SemVer 2.0.
+        VERSION: 0.0.0-pr.${{ github.event.pull_request.number }}
         REGISTRY: ${{ inputs.registry }}
         PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}

@@ -25,5 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The repository release workflow now dogfoods this action directly.
 - Convenience reusable workflows pin the root action at `v1` instead of `main`.
+- `mode: ci` now produces a SemVer-compatible `VERSION` (`0.0.0-pr.<N>`
+  instead of the previous `pr-<N>`) so downstream Dockerfiles and
+  MSBuild/NuGet don't reject the value when it propagates into the
+  build context. The image tag identifier remains "pr-N" semantically.
 
 <!-- semantic-release will append entries above this line -->
