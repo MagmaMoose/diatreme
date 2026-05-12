@@ -224,13 +224,26 @@ GitHub App private key (PEM). Required when app-id is set.
 - Default: `false`
 
 Pass-through to actions/checkout's `submodules` input on
-release-runner's internal checkout step. One of:
+release-runner's internal checkout step.
+
+When set non-false in `auth-mode: private-app` or `auth-mode:
+auto` with App credentials, the App installation token is also
+broadened from the current-repo scope to the owner scope so
+submodules from sibling repositories in the same org can be
+fetched. The App must be installed on the submodule's repo for
+that broadened scope to actually grant access.
+
+For `auth-mode: github-token` / `public-app`, the configured
+token must have read access to the submodule repository — the
+action does not generate a separate token in those modes.
+
+One of:
 
 | Value | Description |
 |---|---|
 | `false` | (default) Skip submodules. |
 | `true` | Fetch submodules at the recorded SHA, one level deep. |
-| `recursive` | Fetch submodules and nested submodules. When set non-false in `auth-mode: private-app` or `auth-mode: auto` with App credentials, the App installation token is also broadened from the current-repo scope to the owner scope so submodules from sibling repositories in the same org can be fetched. The App must be installed on the submodule's repo for that broadened scope to actually grant access. For `auth-mode: github-token` / `public-app`, the configured token must have read access to the submodule repository — the action does not generate a separate token in those modes. |
+| `recursive` | Fetch submodules and nested submodules. |
 
 #### `token-broker-url`
 
