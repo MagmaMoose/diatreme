@@ -193,7 +193,8 @@ inputs:
       Override when targeting a registry that requires fixed credentials —
       e.g. GitHub Enterprise Server's container registry
       (`containers.<ghes-host>`), Harbor, JFrog Artifactory, Nexus, Azure
-      Container Registry. Typical value: `${{ secrets.REGISTRY_USERNAME }}`.
+      Container Registry. Pass a workflow secret, typically
+      `secrets.REGISTRY_USERNAME`.
 
       When set, you should also set `registry-password`. The pair is used
       verbatim for both CI image pushes (`pr-<N>` tags) and release image
@@ -212,9 +213,9 @@ inputs:
       to the workflow token.
 
       Override when targeting a registry that requires fixed credentials.
-      Typical value: `${{ secrets.REGISTRY_PASSWORD }}`. When set, you
-      should also set `registry-username`. The pair is used verbatim for
-      both CI image pushes and release image promotion.
+      Pass a workflow secret, typically `secrets.REGISTRY_PASSWORD`. When
+      set, you should also set `registry-username`. The pair is used
+      verbatim for both CI image pushes and release image promotion.
     required: false
     default: ''
 
