@@ -1,0 +1,3 @@
+// Syncthing ignore patterns
+// .git internals must NOT be synced — non-atomic file syncs corrupt the object store
+.git
