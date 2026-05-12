@@ -608,14 +608,17 @@ runs:
 
           # 1) Try exact match first — fastest and unambiguous. `master`
           # and `main` alias each other so a single branch-map works for
-          # repos that have and haven't been renamed off `master`. An
-          # explicit entry for either name always wins; the alias only
-          # kicks in when one is present and the other isn't.
+          # repos that have and haven't been renamed off `master`. The
+          # alias is guarded by `has($b)`: an explicit entry for either
+          # name (even one set to null) suppresses the alias and behaves
+          # like the historical `.[$b] // empty` lookup. The alias only
+          # kicks in when the branch key is absent from the map.
           DETECTED_ENV=$(echo "${BRANCH_MAP}" | jq -r --arg b "${BRANCH}" '
-            .[$b]
-            // (if   $b == "main"   then .["master"] // empty
-                elif $b == "master" then .["main"]   // empty
-                else empty end)
+            if has($b) then (.[$b] // empty)
+            else (if   $b == "main"   then (.["master"] // empty)
+                  elif $b == "master" then (.["main"]   // empty)
+                  else empty end)
+            end
           ')
 
           # 2) Fall back to glob patterns. Keys containing `*` are treated as
