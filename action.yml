@@ -204,8 +204,12 @@ inputs:
   registry-password:
     description: |
       Password / token for `docker login` against `registry`. Defaults to
-      the workflow's auth token (the same value used for git operations),
-      which is what GHCR on github.com expects.
+      the workflow's `GITHUB_TOKEN` (the `github-token` input, or
+      `github.token` when that is blank), which is what GHCR on github.com
+      expects. This is independent of the token used for git operations —
+      git ops use the GitHub App installation token under `auth-mode:
+      private-app` or `public-app`, but registry login always falls back
+      to the workflow token.
 
       Override when targeting a registry that requires fixed credentials.
       Typical value: `${{ secrets.REGISTRY_PASSWORD }}`. When set, you
@@ -570,8 +574,8 @@ runs:
       uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
       with:
         registry: ${{ inputs.registry }}
-        username: ${{ inputs.registry-username != '' && inputs.registry-username || github.actor }}
-        password: ${{ inputs.registry-password != '' && inputs.registry-password || steps.auth.outputs.registry-token }}
+        username: ${{ inputs.registry-username || github.actor }}
+        password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
 
     - name: Build and push pr-<N>
       if: inputs.mode == 'ci' && inputs.image_name != ''
@@ -1291,8 +1295,8 @@ runs:
       uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
       with:
         registry: ${{ inputs.registry }}
-        username: ${{ inputs.registry-username != '' && inputs.registry-username || github.actor }}
-        password: ${{ inputs.registry-password != '' && inputs.registry-password || steps.auth.outputs.registry-token }}
+        username: ${{ inputs.registry-username || github.actor }}
+        password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
 
     - name: Promote images
       if: inputs.mode == 'release' && inputs.image_name != '' && steps.normalize.outputs.released == 'true'

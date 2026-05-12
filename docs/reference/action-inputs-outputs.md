@@ -289,8 +289,12 @@ promotion.
 - Default: `''`
 
 Password / token for `docker login` against `registry`. Defaults to
-the workflow's auth token (the same value used for git operations),
-which is what GHCR on github.com expects.
+the workflow's `GITHUB_TOKEN` (the `github-token` input, or
+`github.token` when that is blank), which is what GHCR on github.com
+expects. This is independent of the token used for git operations —
+git ops use the GitHub App installation token under `auth-mode:
+private-app` or `public-app`, but registry login always falls back
+to the workflow token.
 
 Override when targeting a registry that requires fixed credentials.
 Typical value: `${{ secrets.REGISTRY_PASSWORD }}`. When set, you
