@@ -23,3 +23,5 @@ nav:
   - Branching strategies: branching-strategies.md
   - Reference:
       - Action inputs and outputs: reference/action-inputs-outputs.md
+  - Operations:
+      - Rolling back a release: rollback.md
