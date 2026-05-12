@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container registries that don't accept GHCR-style `github.actor` +
   workflow-token auth — GHES `containers.<host>`, Harbor, Artifactory,
   Nexus, ACR, etc. Defaults to current behaviour when both are blank.
+- `submodules` input passed through to the internal `actions/checkout`
+  step. When set non-false under `auth-mode: private-app` / `auto`,
+  the App installation token is broadened from current-repo scope to
+  owner scope so sibling-repo submodules in the same org can be fetched.
+  Default `false` keeps existing behaviour.
 
 ### Changed
 

@@ -43,6 +43,7 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "github-token",
     "app-id",
     "app-private-key",
+    "submodules",
     "token-broker-url",
     "oidc-audience",
   ]),

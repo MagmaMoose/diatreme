@@ -159,6 +159,27 @@ inputs:
     required: false
     default: ''
 
+  submodules:
+    description: |
+      Pass-through to actions/checkout's `submodules` input on
+      release-runner's internal checkout step. One of:
+        false      (default) Skip submodules.
+        true       Fetch submodules at the recorded SHA, one level deep.
+        recursive  Fetch submodules and nested submodules.
+
+      When set non-false in `auth-mode: private-app` or `auth-mode:
+      auto` with App credentials, the App installation token is also
+      broadened from the current-repo scope to the owner scope so
+      submodules from sibling repositories in the same org can be
+      fetched. The App must be installed on the submodule's repo for
+      that broadened scope to actually grant access.
+
+      For `auth-mode: github-token` / `public-app`, the configured
+      token must have read access to the submodule repository — the
+      action does not generate a separate token in those modes.
+    required: false
+    default: 'false'
+
   # ── Docker ────────────────────────────────────────────────────────────────
   image_name:
     description: |
@@ -523,6 +544,11 @@ runs:
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
+        # When the caller requests submodule checkout, broaden the
+        # installation token's scope from the current repo to all repos
+        # in the owner that the App is installed on. Empty string =
+        # default current-repo scope.
+        owner: ${{ inputs.submodules != 'false' && github.repository_owner || '' }}
 
     - name: Request public GitHub App token
       id: public-app-token
@@ -551,6 +577,7 @@ runs:
         fetch-depth: 0
         fetch-tags: true
         token: ${{ steps.auth.outputs.token }}
+        submodules: ${{ inputs.submodules }}
 
     # ═════════════════════════════════════════════════════════════════════════
     # CI MODE — build and push pr-<N> image
