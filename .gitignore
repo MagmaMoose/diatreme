@@ -11,3 +11,6 @@ worker/.wrangler/
 # They must never be staged — the content is older than whatever
 # is already on disk.
 *.sync-conflict-*
+
+# Claude Code session state
+.claude/

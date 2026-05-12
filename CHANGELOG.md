@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Shared public GitHub App auth through the Cloudflare Worker token broker.
 - Repository CI for actionlint, markdownlint, Docker Bake validation, Bats shell tests, and Worker checks.
+- `registry-username` and `registry-password` inputs so callers can target
+  container registries that don't accept GHCR-style `github.actor` +
+  workflow-token auth — GHES `containers.<host>`, Harbor, Artifactory,
+  Nexus, ACR, etc. Defaults to current behaviour when both are blank.
 
 ### Changed
 
