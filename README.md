@@ -48,13 +48,16 @@ Install the [Release Runner GitHub App](https://github.com/apps/release-runner/i
 ### Scale up
 
 - **Docker image promotion** — add `packages: write` and `image_name: my-app`, plus a `docker-bake.hcl`. PR builds land at `pr-<N>`; merges retag to the release version, no rebuild.
-- **Multiple environments** — switch to `environments: '["dev", "staging", "prod"]'`, set `prerelease-identifiers`, and turn on `create-promotion-pr: 'true'` to auto-open the next-env PR.
+- **Multiple environments** — switch to `environments: '["dev", "staging", "prod"]'`, set `prerelease-identifiers`, and run in `deployment-model: tbd-pr` with `create-promotion-pr: 'true'` so each release publish opens the promotion PR for the next environment. See [Choose your setup](https://releaserunner.dev/docs/choose-your-setup/) for the full caller workflow (the initial push trigger needs an explicit `environment` for the first env in the chain).
 - **Concurrent triggers** (push + promotion-PR merges on the same branch) — swap the `uses:` line for the bundled reusable workflow:
 
   ```yaml
   jobs:
     release:
       uses: magmamoose/release-runner/.github/workflows/release-runner.yaml@v1
+      permissions:
+        contents: read
+        id-token: write
       with:
         environment: prod
         environments: '["prod"]'
@@ -68,7 +71,7 @@ Install the [Release Runner GitHub App](https://github.com/apps/release-runner/i
 - **Four versioning backends behind one input.** `versioning-tool: semantic-release-npm | semantic-release-python | gitversion | release-please` — swap without touching anything else.
 - **Retag-not-rebuild Docker promotion.** The image that passed PR CI as `pr-42` becomes `v1.2.3` via registry retag. No fresh build, no binary drift between staging and prod. Falls back to a Docker Bake rebuild only when the source image is missing.
 - **Per-environment prerelease identifiers.** `{"dev":"dev","staging":"rc"}` → tags land as `v1.2.3-dev.1`, `v1.2.3-rc.1`, `v1.2.3`. Production sheds the suffix.
-- **Promotion PRs auto-open.** In `deployment-model: tbd-pr` with `create-promotion-pr: 'true'`, pushing to `main` cuts the dev tag and opens `promote/staging/<version>`. Merging that opens `promote/prod/<version>`; merging that cuts the stable prod tag.
+- **Promotion PRs auto-open.** In `deployment-model: tbd-pr` with `create-promotion-pr: 'true'`, each release publish opens the promotion PR for the next environment. Merging `promote/staging/<version>` cuts the staging tag and opens `promote/prod/<version>`; merging that cuts the stable prod tag. The cascade chains through every entry in `environments`.
 - **ClickUp + GitHub Projects v2 in release notes.** Scans commits and PR bodies in the release range for `app.clickup.com/t/...` URLs and issue/PR refs (`#NNN`), appends grouped sections to the GitHub Release notes and to any open promotion PR body.
 - **Production guardrail on by default.** `admin-required-from: '@last'` makes manual `workflow_dispatch` runs targeting production require `permission: admin` on the repository. Push and promotion-PR-merge triggers are unaffected.
 - **Built-in concurrency lock.** The bundled reusable workflow declares `concurrency: release-runner-<target-branch>` with `cancel-in-progress: false`, so concurrent triggers on the same branch queue FIFO instead of racing the tag write. Composite actions can't do this on their own.
