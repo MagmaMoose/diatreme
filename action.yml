@@ -389,7 +389,8 @@ inputs:
 
       Honoured by:
         - semantic-release-python: passed as the upstream `force` input.
-        - gitversion: passed as `/overrideconfig increment=Major|Minor|Patch`.
+        - gitversion: passed to gittools/actions@v4 as
+          `overrideConfig: increment=Major|Minor|Patch`.
 
       Ignored by semantic-release-npm and release-please — those tools
       have no clean equivalent and a forced bump would conflict with the
