@@ -80,6 +80,12 @@ inputs:
       Exact matches always win over globs. When two globs both match, the
       one with the longer key wins, so a specific pattern like
       `release/hotfix/*` beats `release/*`.
+
+      `master` and `main` are interchangeable for exact-match lookup —
+      a branch-map entry for `"main"` will match a `master`-default repo
+      and vice versa, so the same map works across repos that haven't
+      finished renaming. An explicit entry for either always wins over
+      the implicit alias.
     required: false
     default: ''
 
@@ -600,8 +606,17 @@ runs:
           fi
           BRANCH="${GITHUB_REF_NAME}"
 
-          # 1) Try exact match first — fastest and unambiguous.
-          DETECTED_ENV=$(echo "${BRANCH_MAP}" | jq -r --arg b "${BRANCH}" '.[$b] // empty')
+          # 1) Try exact match first — fastest and unambiguous. `master`
+          # and `main` alias each other so a single branch-map works for
+          # repos that have and haven't been renamed off `master`. An
+          # explicit entry for either name always wins; the alias only
+          # kicks in when one is present and the other isn't.
+          DETECTED_ENV=$(echo "${BRANCH_MAP}" | jq -r --arg b "${BRANCH}" '
+            .[$b]
+            // (if   $b == "main"   then .["master"] // empty
+                elif $b == "master" then .["main"]   // empty
+                else empty end)
+          ')
 
           # 2) Fall back to glob patterns. Keys containing `*` are treated as
           # globs (translated to anchored regex with dots escaped). This
