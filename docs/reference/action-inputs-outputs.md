@@ -148,6 +148,12 @@ Exact matches always win over globs. When two globs both match, the
 one with the longer key wins, so a specific pattern like
 `release/hotfix/*` beats `release/*`.
 
+`master` and `main` are interchangeable for exact-match lookup —
+a branch-map entry for `"main"` will match a `master`-default repo
+and vice versa, so the same map works across repos that haven't
+finished renaming. An explicit entry for either always wins over
+the implicit alias.
+
 #### `promote-branch-prefix`
 
 - Required: `false`
@@ -259,6 +265,37 @@ Groups are expanded — all sub-targets are built/promoted automatically.
 - Default: `ghcr.io`
 
 Container registry
+
+#### `registry-username`
+
+- Required: `false`
+- Default: `''`
+
+Username for `docker login` against `registry`. Defaults to
+`github.actor` when blank, which is what GHCR on github.com expects.
+
+Override when targeting a registry that requires fixed credentials —
+e.g. GitHub Enterprise Server's container registry
+(`containers.<ghes-host>`), Harbor, JFrog Artifactory, Nexus, Azure
+Container Registry. Typical value: `${{ secrets.REGISTRY_USERNAME }}`.
+
+When set, you should also set `registry-password`. The pair is used
+verbatim for both CI image pushes (`pr-<N>` tags) and release image
+promotion.
+
+#### `registry-password`
+
+- Required: `false`
+- Default: `''`
+
+Password / token for `docker login` against `registry`. Defaults to
+the workflow's auth token (the same value used for git operations),
+which is what GHCR on github.com expects.
+
+Override when targeting a registry that requires fixed credentials.
+Typical value: `${{ secrets.REGISTRY_PASSWORD }}`. When set, you
+should also set `registry-username`. The pair is used verbatim for
+both CI image pushes and release image promotion.
 
 #### `platforms`
 

@@ -45,6 +45,44 @@ target "default" {
 
 For multiple images, make `default` a Bake group and give each target its own tag.
 
+### Authenticate to a non-GHCR registry
+
+The action's defaults — `registry: ghcr.io`, login as `github.actor` with the
+workflow's auth token — work for GHCR on github.com. For any other registry,
+set `registry`, `registry-username`, and `registry-password` to credentials
+the registry actually accepts.
+
+This is the right path for:
+
+- GitHub Enterprise Server's container registry (`containers.<ghes-host>`)
+- Harbor, JFrog Artifactory, Nexus
+- Azure Container Registry, AWS ECR (with an access token), GCP Artifact Registry
+- Any internal registry behind basic auth
+
+Add these inputs to **both** your CI workflow (Section 3) and your release
+workflow (Section 4), and store the credentials as repo or org secrets:
+
+```yaml
+- uses: calebsargeant/semantic-release@v1
+  with:
+    mode: release   # or ci
+    image_name: my-app
+    registry: containers.ghes.example.com
+    registry-username: ${{ secrets.REGISTRY_USERNAME }}
+    registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+```
+
+Make sure the `${REGISTRY}` default in your `docker-bake.hcl` matches the
+registry you log in to, otherwise the push will succeed-then-fail with a
+hostname mismatch:
+
+```hcl
+variable "REGISTRY" { default = "containers.ghes.example.com" }
+```
+
+Leave `registry-username` and `registry-password` blank to keep the GHCR
+defaults.
+
 ## 3. Add CI For Docker Repositories
 
 Skip this section for version-only releases.

@@ -51,6 +51,8 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "bake_file",
     "bake_target",
     "registry",
+    "registry-username",
+    "registry-password",
     "platforms",
   ]),
   ("CI checks", [
