@@ -26,4 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The repository release workflow now dogfoods this action directly.
 - Convenience reusable workflows pin the root action at `v1` instead of `main`.
 
+### Fixed
+
+- `gh` CLI calls (`gh release create`, `gh api`, etc.) now use the
+  GitHub host the workflow is actually running on. Previously they
+  defaulted to github.com, which broke `Publish GitHub Release` and
+  the ClickUp / Projects v2 metadata steps on GHE Server runners
+  with `none of the git remotes configured for this repository
+  point to a known GitHub host`.
+
 <!-- semantic-release will append entries above this line -->
