@@ -1008,16 +1008,17 @@ runs:
       if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/execute@v4
       with:
-        useConfigFile: true
         configFilePath: ${{ inputs.gitversion-config }}
         # GitVersion accepts /overrideconfig flags; map force-bump onto its
         # `increment` knob. Empty force-bump leaves GitVersion's branch
-        # rules in charge.
-        additionalArguments: |
+        # rules in charge. gittools/actions@v4 takes one key=value per
+        # line via overrideConfig (replaces the v0 additionalArguments
+        # /overrideconfig invocation that v4 no longer recognises).
+        overrideConfig: |
           ${{
-            inputs.force-bump == 'major' && '/overrideconfig increment=Major' ||
-            inputs.force-bump == 'minor' && '/overrideconfig increment=Minor' ||
-            inputs.force-bump == 'patch' && '/overrideconfig increment=Patch' ||
+            inputs.force-bump == 'major' && 'increment=Major' ||
+            inputs.force-bump == 'minor' && 'increment=Minor' ||
+            inputs.force-bump == 'patch' && 'increment=Patch' ||
             ''
           }}
 
