@@ -83,6 +83,34 @@ variable "REGISTRY" { default = "containers.ghes.example.com" }
 Leave `registry-username` and `registry-password` blank to keep the GHCR
 defaults.
 
+### Fetch git submodules
+
+Release Runner runs its own `actions/checkout` internally before any
+build step, so adding `actions/checkout` with `submodules: recursive`
+in the caller workflow doesn't help — release-runner's checkout
+overwrites it. Use the `submodules` input instead:
+
+```yaml
+- uses: calebsargeant/semantic-release@v1
+  with:
+    mode: release   # or ci
+    image_name: my-app
+    submodules: recursive
+    auth-mode: private-app
+    app-id: '12345'
+    app-private-key: ${{ secrets.RELEASE_RUNNER_APP_PRIVATE_KEY }}
+```
+
+When `submodules` is non-`false` under `auth-mode: private-app` or
+`auto`, the App installation token is broadened from current-repo
+scope to owner scope, so submodules from sibling repos in the same
+org are fetchable in one call. The App must be installed on the
+submodule repo for that to actually grant access.
+
+For `auth-mode: github-token` / `public-app`, supply a token (via
+`github-token`) that has read access to the submodule repo. The action
+doesn't issue a separate one in those modes.
+
 ## 3. Add CI For Docker Repositories
 
 Skip this section for version-only releases.
