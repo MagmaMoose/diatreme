@@ -4,27 +4,23 @@
   <img src="docs/release-runner-logo.png" alt="Release Runner" width="200">
 </p>
 
-[![CI](https://github.com/calebsargeant/release-runner/actions/workflows/ci.yaml/badge.svg)](https://github.com/calebsargeant/release-runner/actions/workflows/ci.yaml)
-[![Release](https://github.com/calebsargeant/release-runner/actions/workflows/release.yaml/badge.svg)](https://github.com/calebsargeant/release-runner/actions/workflows/release.yaml)
-[![Docs](https://github.com/calebsargeant/release-runner/actions/workflows/docs-pages.yaml/badge.svg)](https://semver.calebsargeant.com)
+[![CI](https://github.com/magmamoose/release-runner/actions/workflows/ci.yaml/badge.svg)](https://github.com/magmamoose/release-runner/actions/workflows/ci.yaml)
+[![Release](https://github.com/magmamoose/release-runner/actions/workflows/release.yaml/badge.svg)](https://github.com/magmamoose/release-runner/actions/workflows/release.yaml)
+[![Docs](https://github.com/magmamoose/release-runner/actions/workflows/docs-pages.yaml/badge.svg)](https://releaserunner.dev/docs)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Release%20Runner-purple?logo=github)](https://github.com/marketplace/actions/release-runner)
-[![License](https://img.shields.io/github/license/calebsargeant/release-runner)](https://github.com/calebsargeant/release-runner/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/magmamoose/release-runner)](https://github.com/magmamoose/release-runner/blob/main/LICENSE)
 
 Instead of composing `cycjimmy/semantic-release-action` + `docker/metadata-action` + `cloudposse/github-action-docker-promote` + ~200 lines of glue YAML, use one action.
 
 <!-- TODO: 30-second GIF showing PR→merge→release→Docker promotion -->
 
-## The "Why"
+I run release management across three different orgs. I got tired of composing `cycjimmy/semantic-release-action` plus `docker/metadata-action` plus `cloudposse/github-action-docker-promote` plus 200 lines of glue YAML in every repo. So I built Release Runner — one action that consolidates the lot, with the multi-environment and promotion-PR patterns I actually needed in production.
 
-Most teams that need semantic versioning, Docker image promotion, and multi-environment releases end up stitching the pieces together: one action picks the version (`semantic-release`, `release-please`, `GitVersion`, or `python-semantic-release`), another logs into GHCR, another retags or rebuilds an image, and a handful of inline shell steps wire it all together — bumping `appsettings.json`, opening promotion PRs, scraping ticket links into release notes.
-
-What falls through the cracks is the connective tissue. Two release runs racing on `main` create a tag that the other workflow then crashes on. The prerelease identifier (`dev`, `rc`) drifts across environments because every workflow's `tag-prefix` got copy-pasted. The image you promoted to staging gets *rebuilt* instead of retagged, so the binary that passed staging tests isn't the binary you ship to prod. Release notes don't mention the four ClickUp tickets the PR descriptions linked to — your release manager assembles that by hand.
-
-Release Runner consolidates this into one composite action and one reusable workflow. The versioning tool is a single input. Image promotion is retag-not-rebuild by default. Promotion PRs are auto-opened. ClickUp links and Projects v2 items are scraped into release notes automatically. And the bundled reusable workflow declares the `concurrency:` block that composite actions can't, so the race window goes away.
+Release Runner runs my production releases today. If you're managing release tooling across multiple repos or orgs and you're tired of the same dance every time, this is for you.
 
 ## 60-Second Quickstart
 
-A production-only release from `main`, using the workflow `GITHUB_TOKEN`:
+A production-only release from `main`, using the Release Runner GitHub App:
 
 ```yaml
 name: Release
@@ -37,30 +33,28 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
     steps:
-      - uses: calebsargeant/release-runner@v1
+      - uses: magmamoose/release-runner@v1
         with:
           environment: prod
           environments: '["prod"]'
           prerelease-identifiers: '{}'
-          auth-mode: github-token
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Add a `pyproject.toml` (default tool: `python-semantic-release`) and merge a conventional commit. You get a git tag, a GitHub Release, and a `CHANGELOG.md` entry. If branch protection blocks `GITHUB_TOKEN` from pushing tags, install the App — see *Scale up* below.
+Install the [Release Runner GitHub App](https://github.com/apps/release-runner/installations/new) on the repo or org, add a `pyproject.toml` (default tool: `python-semantic-release`), and merge a conventional commit. You get a Git tag, a GitHub Release, and a `CHANGELOG.md` entry.
 
 ### Scale up
 
 - **Docker image promotion** — add `packages: write` and `image_name: my-app`, plus a `docker-bake.hcl`. PR builds land at `pr-<N>`; merges retag to the release version, no rebuild.
 - **Multiple environments** — switch to `environments: '["dev", "staging", "prod"]'`, set `prerelease-identifiers`, and turn on `create-promotion-pr: 'true'` to auto-open the next-env PR.
-- **Strict branch protection** — install the [Release Runner GitHub App](https://github.com/apps/release-runner/installations/new) and drop the `auth-mode` and `github-token` inputs. The App becomes the default; grant the job `id-token: write` instead of `contents: write`.
 - **Concurrent triggers** (push + promotion-PR merges on the same branch) — swap the `uses:` line for the bundled reusable workflow:
 
   ```yaml
   jobs:
     release:
-      uses: calebsargeant/release-runner/.github/workflows/release-runner.yaml@v1
+      uses: magmamoose/release-runner/.github/workflows/release-runner.yaml@v1
       with:
         environment: prod
         environments: '["prod"]'
@@ -93,34 +87,17 @@ Add a `pyproject.toml` (default tool: `python-semantic-release`) and merge a con
 | cloudposse/github-action-docker-promote | — | — | ✓ | — | — | — | — | — | — |
 | Nextdoor/docker-image-retag-action | — | — | ✓ | — | — | — | — | — | — |
 
-<sub>Best-effort comparison as of 2026-05-11; corrections welcome via PR.</sub>
+<sub>Best-effort comparison as of 2026-05-12; corrections welcome via PR.</sub>
 
 ## Setup
 
-- [Concepts](https://semver.calebsargeant.com/concepts/) — TBD vs BBD, promotion PRs, Docker retag, the auth-token model.
-- [Choose your setup](https://semver.calebsargeant.com/choose-your-setup/) — paste-ready snippets for each release model.
-- [Repository setup](https://semver.calebsargeant.com/repository-setup/) — versioning config, `docker-bake.hcl`, PR CI, release workflow.
-- [Organization setup](https://semver.calebsargeant.com/organization-setup/) — when to upgrade from `github-token` to the Release Runner App.
+- [Concepts](https://releaserunner.dev/docs/concepts/) — TBD vs BBD, promotion PRs, Docker retag, the auth-token model.
+- [Choose your setup](https://releaserunner.dev/docs/choose-your-setup/) — paste-ready snippets for each release model.
+- [Repository setup](https://releaserunner.dev/docs/repository-setup/) — versioning config, `docker-bake.hcl`, PR CI, release workflow.
+- [Organization setup](https://releaserunner.dev/docs/organization-setup/) — installing the App, branch-protection bypass, when to fall back to `GITHUB_TOKEN`.
 
-Full input/output reference: [Action reference](https://semver.calebsargeant.com/reference/action-inputs-outputs/).
+Full input/output reference: [Action reference](https://releaserunner.dev/docs/reference/action-inputs-outputs/).
 
-## Outputs
+---
 
-| Output | Meaning |
-|---|---|
-| `version` | Semver without prefix, for example `1.0.0` |
-| `tag` | Full Git tag, for example `v1.0.0` |
-| `released` | `true` when a new release was created |
-| `is-prerelease` | `true` for prerelease environments |
-| `prerelease-identifier` | The prerelease identifier (e.g. `dev`, `rc`); empty for prod |
-| `resolved-environment` | Environment selected for the run |
-
-## Sponsor
-
-If Release Runner saves you time or helps your team ship more reliably, consider supporting its development:
-
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-♥-ea4aaa?logo=github)](https://github.com/sponsors/CalebSargeant)
-[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/calebsargeant)
-
-<!-- TODO: Caleb fills in -->
-GitHub Sponsors at the $X/month tier unlocks access to the hosted Release Runner dashboard — cross-repo release view, Slack notifications, audit log retention.
+A Magma Moose product.
