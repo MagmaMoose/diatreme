@@ -532,6 +532,17 @@ runs:
   using: composite
   steps:
 
+    # ── 0. Resolve GH_HOST for the gh CLI ───────────────────────────────────
+    # Every subsequent `gh release`, `gh api`, etc. call in this action
+    # talks to the GitHub host this workflow is running on. The CLI
+    # otherwise defaults to github.com, which silently misroutes API
+    # calls (or 404s) when the action runs on a GHE Server instance.
+    # Persist GH_HOST to $GITHUB_ENV so every later step inherits it.
+    - name: Resolve GH_HOST for the gh CLI
+      shell: bash
+      run: |
+        echo "GH_HOST=${GITHUB_SERVER_URL#https://}" >> "$GITHUB_ENV"
+
     # ── 1. Optional GitHub App token ────────────────────────────────────────
     - name: Generate private GitHub App token
       id: app-token
