@@ -26,11 +26,14 @@ reconciliation rather than waiting up to 5 minutes for the automatic scan.
 
 ## Why Order Matters
 
-The `ImagePolicy` selects the highest semver tag present in the container
-registry. If you revert the kustomization manifest first but the image tag
-still exists in GHCR, the `ImageUpdateAutomation` will overwrite your change
-back within 5 minutes. Always remove the image from the registry before
-touching any manifests.
+A common `ImagePolicy` configuration is semver-highest: pick the highest
+semver tag currently in the container registry. If your policy uses a
+different selection (alphabetical, numerical, regex), substitute
+accordingly — but the ordering still applies: if you revert the
+kustomization manifest first while the image tag still exists in GHCR,
+the `ImageUpdateAutomation` will overwrite your change back within 5
+minutes when the policy re-evaluates. Always remove the image from the
+registry before touching any manifests.
 
 ## Procedure
 
@@ -44,10 +47,13 @@ delete a digest that's also tagged `latest`, `staging`, or another
 release.
 
 Find the internal version ID and its tag set for the release tag you want
-to remove:
+to remove. Use `--paginate` so the lookup works when the package has more
+than one page of versions (GHCR returns 30 per page by default). The path
+is `/orgs/<org>/...` for org-owned packages and `/users/<user>/...` for
+user-owned ones:
 
 ```bash
-gh api /orgs/<org>/packages/container/<image_name>/versions \
+gh api --paginate /orgs/<org>/packages/container/<image_name>/versions \
   --jq '.[]
         | select((.metadata.container.tags // []) | index("<tag>"))
         | {id, tags: (.metadata.container.tags // [])}'
@@ -64,6 +70,17 @@ If the version is also tagged `latest` or another environment tag,
 **don't delete it** — re-tag `latest` (and any other shared tags) to the
 previous version's digest first, then come back and delete the rolled-back
 version.
+
+**Example with placeholders** — `my-org` owns a container package `my-app`;
+rolling back tag `v1.2.3`:
+
+```bash
+ID=$(gh api --paginate /orgs/my-org/packages/container/my-app/versions \
+  --jq '.[]
+        | select((.metadata.container.tags // []) | index("v1.2.3"))
+        | .id')
+gh api --method DELETE /orgs/my-org/packages/container/my-app/versions/$ID
+```
 
 ### 2. Delete the GitHub Release
 
