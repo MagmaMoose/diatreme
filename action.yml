@@ -430,6 +430,19 @@ inputs:
     required: false
     default: ''
 
+  version-override:
+    description: |
+      Explicit version to release/build. Accepts SemVer with optional `v`
+      prefix, e.g. `3.20.0` or `v3.20.0-rc.1`.
+
+      When set, release-runner skips automatic version calculation and uses
+      this value for release tag/image versioning. The optional `v` prefix is
+      stripped only for `${VERSION}` substitution in bake/build args.
+
+      Mutually exclusive with `force-bump`.
+    required: false
+    default: ''
+
   # ── Version file injection (any tool) ─────────────────────────────────────
   version-file:
     description: |
@@ -611,6 +624,30 @@ runs:
         PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-branch-naming.sh"
 
+    - name: Validate version override
+      id: version-override
+      if: (inputs.mode == 'ci' || inputs.mode == 'release') && inputs.version-override != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        RAW="${{ inputs.version-override }}"
+
+        if [ -n "${{ inputs.force-bump }}" ]; then
+          echo "::error::version-override and force-bump are mutually exclusive; set only one."
+          exit 1
+        fi
+
+        if ! [[ "${RAW}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::version-override '${RAW}' is not a valid SemVer (expected examples: 3.20.0, 3.20.0-rc.1, v3.20.0)."
+          exit 1
+        fi
+
+        VERSION="${RAW#v}"
+        TAG="${{ inputs.tag-prefix }}${VERSION}"
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+
     - name: Set up QEMU
       if: inputs.mode == 'ci' && inputs.image_name != ''
       uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -656,7 +693,7 @@ runs:
           "${CACHE_ARGS[@]}" \
           --push
       env:
-        VERSION: pr-${{ github.event.pull_request.number }}
+        VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
         REGISTRY: ${{ inputs.registry }}
         PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
@@ -846,7 +883,7 @@ runs:
 
     - name: Run python-semantic-release
       id: psr
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-python'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-python'
       uses: python-semantic-release/python-semantic-release@v10
       with:
         github_token: ${{ steps.auth.outputs.token }}
@@ -870,14 +907,14 @@ runs:
         directory: ${{ inputs.working-directory }}
 
     - name: Set up Node.js (semantic-release-npm)
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       uses: actions/setup-node@v6
       with:
         node-version: '20'
 
     - name: Run semantic-release (npm)
       id: semrel-npm
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -1047,14 +1084,14 @@ runs:
         fi
 
     - name: Install GitVersion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/setup@v4
       with:
         versionSpec: ${{ inputs.gitversion-spec }}
 
     - name: Execute GitVersion
       id: gitversion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/execute@v4
       with:
         configFilePath: ${{ inputs.gitversion-config }}
@@ -1073,7 +1110,7 @@ runs:
 
     - name: Create GitVersion release tag
       id: gitversion-tag
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
@@ -1141,9 +1178,54 @@ runs:
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
 
+    - name: Create version-override release tag
+      id: version-override-tag
+      if: inputs.mode == 'release' && inputs.version-override != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+      run: |
+        set -euo pipefail
+        VERSION="${{ steps.version-override.outputs.version }}"
+        TAG="${{ steps.version-override.outputs.tag }}"
+
+        echo "Creating tag: ${TAG}"
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        REMOTE_URL=$(git remote get-url origin)
+        AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+
+        if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
+          echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+          echo "released=false"     >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        git tag -a "${TAG}" -m "chore(release): ${TAG}"
+
+        if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
+          if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
+            echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race). Skipping downstream steps."
+            git tag -d "${TAG}" 2>/dev/null || true
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+            echo "released=false"     >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
+          exit 1
+        fi
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+        echo "released=true"      >> "$GITHUB_OUTPUT"
+
     - name: Run release-please
       id: release-please
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'release-please'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'release-please'
       uses: googleapis/release-please-action@v5
       with:
         token: ${{ steps.auth.outputs.token }}
@@ -1162,41 +1244,48 @@ runs:
         RELEASED="false"
         TAG=""
         RELEASE_NOTES=""
-        case "${TOOL}" in
-          semantic-release-python)
-            VERSION="${{ steps.psr.outputs.version }}"
-            RELEASED="${{ steps.psr.outputs.released }}"
-            TAG="${{ steps.psr.outputs.tag }}"
-            ;;
-          semantic-release-npm)
-            LATEST_TAG="${{ steps.semrel-npm.outputs.latest_tag }}"
-            RELEASED="${{ steps.semrel-npm.outputs.released }}"
-            if [ -n "${LATEST_TAG}" ]; then
-              VERSION="${LATEST_TAG#${PREFIX}}"
-              TAG="${LATEST_TAG}"
-            fi
-            # Only the prerelease branch emits release_notes; stable
-            # and promotion-PR paths fall through to --generate-notes.
-            RELEASE_NOTES="${{ steps.semrel-npm.outputs.release_notes }}"
-            ;;
-          gitversion)
-            VERSION="${{ steps.gitversion-tag.outputs.version }}"
-            TAG="${{ steps.gitversion-tag.outputs.tag }}"
-            # The gitversion-tag step emits released=false when it
-            # detects a parallel run beat us to publishing the same tag.
-            # Default to true for the no-conflict case so existing
-            # callers see no behaviour change.
-            RELEASED="${{ steps.gitversion-tag.outputs.released }}"
-            [ -z "${RELEASED}" ] && RELEASED="true"
-            ;;
-          release-please)
-            if [ "${{ steps.release-please.outputs.release_created }}" == "true" ]; then
-              TAG="${{ steps.release-please.outputs.tag_name }}"
-              VERSION="${TAG#${PREFIX}}"
-              RELEASED="true"
-            fi
-            ;;
-        esac
+        if [ -n "${{ inputs.version-override }}" ]; then
+          TOOL="version-override"
+          VERSION="${{ steps.version-override-tag.outputs.version }}"
+          TAG="${{ steps.version-override-tag.outputs.tag }}"
+          RELEASED="${{ steps.version-override-tag.outputs.released }}"
+        else
+          case "${TOOL}" in
+            semantic-release-python)
+              VERSION="${{ steps.psr.outputs.version }}"
+              RELEASED="${{ steps.psr.outputs.released }}"
+              TAG="${{ steps.psr.outputs.tag }}"
+              ;;
+            semantic-release-npm)
+              LATEST_TAG="${{ steps.semrel-npm.outputs.latest_tag }}"
+              RELEASED="${{ steps.semrel-npm.outputs.released }}"
+              if [ -n "${LATEST_TAG}" ]; then
+                VERSION="${LATEST_TAG#${PREFIX}}"
+                TAG="${LATEST_TAG}"
+              fi
+              # Only the prerelease branch emits release_notes; stable
+              # and promotion-PR paths fall through to --generate-notes.
+              RELEASE_NOTES="${{ steps.semrel-npm.outputs.release_notes }}"
+              ;;
+            gitversion)
+              VERSION="${{ steps.gitversion-tag.outputs.version }}"
+              TAG="${{ steps.gitversion-tag.outputs.tag }}"
+              # The gitversion-tag step emits released=false when it
+              # detects a parallel run beat us to publishing the same tag.
+              # Default to true for the no-conflict case so existing
+              # callers see no behaviour change.
+              RELEASED="${{ steps.gitversion-tag.outputs.released }}"
+              [ -z "${RELEASED}" ] && RELEASED="true"
+              ;;
+            release-please)
+              if [ "${{ steps.release-please.outputs.release_created }}" == "true" ]; then
+                TAG="${{ steps.release-please.outputs.tag_name }}"
+                VERSION="${TAG#${PREFIX}}"
+                RELEASED="true"
+              fi
+              ;;
+          esac
+        fi
         if [ -z "${VERSION}" ]; then
           LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "${LATEST}" ]; then

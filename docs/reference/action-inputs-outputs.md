@@ -112,6 +112,20 @@ Allowed values:
 | `major` | Force a major bump (e.g. 1.2.3 → 2.0.0). |
 | `''` | (default) Let the versioning tool decide. Honoured by: - semantic-release-python: passed as the upstream `force` input. - gitversion: passed to gittools/actions@v4 as `overrideConfig: increment=Major|Minor|Patch`. Ignored by semantic-release-npm and release-please — those tools have no clean equivalent and a forced bump would conflict with the tool's own logic. Wire your `workflow_dispatch` `bump` input to this input from the caller workflow. |
 
+#### `version-override`
+
+- Required: `false`
+- Default: `''`
+
+Explicit version to release/build. Accepts SemVer with optional `v`
+prefix, e.g. `3.20.0` or `v3.20.0-rc.1`.
+
+When set, release-runner skips automatic version calculation and uses
+this value for release tag/image versioning. The optional `v` prefix is
+stripped only for `${VERSION}` substitution in bake/build args.
+
+Mutually exclusive with `force-bump`.
+
 ### Deployment model
 
 #### `deployment-model`
@@ -177,6 +191,14 @@ Target branch for promotion PRs.
 When true, automatically creates the next environment promotion PR after a
 prerelease (deployment-model: tbd-pr only). Set to false when using the
 tbd-promote reusable workflow separately.
+
+One open promotion PR per target environment: if an open promotion PR
+already exists for the next environment (any version), its title and
+body are refreshed to the latest tag instead of opening a duplicate.
+Reviewers should click "Update Branch" on the existing PR before
+merging so the cut reflects the latest commits on the target branch —
+the version in the PR title is metadata; the cut version is derived
+from the merged commit history.
 
 ### Authentication
 
