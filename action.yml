@@ -1459,35 +1459,32 @@ runs:
           PROMOTED="false"
           if [ -n "${SOURCE_TAG_SUFFIX}" ]; then
             SOURCE="${IMAGE}:${SOURCE_TAG_SUFFIX}"
-            SOURCE_DIGEST=$(docker buildx imagetools inspect "${SOURCE}" \
-              --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || echo "")
+            # Retag via the standard Distribution V2 pull/tag/push flow for
+            # cross-registry compatibility (including GHE Packages).
+            RETAG_OK=true
+            docker pull "${SOURCE}" || RETAG_OK=false
+            if [ "${RETAG_OK}" = "true" ]; then
+              docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false
+            fi
+            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+              docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false
+            fi
+            if [ "${RETAG_OK}" = "true" ]; then
+              docker push "${NEW_TAG}" || RETAG_OK=false
+            fi
+            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+              docker push "${IMAGE}:latest" || RETAG_OK=false
+            fi
 
-            if [ -n "${SOURCE_DIGEST}" ]; then
-              # `imagetools create` can fail mid-flight against registries
-              # that don't implement the OCI referrers index — notably GHE
-              # Packages, which returns an HTML 404 page where buildx
-              # expects JSON ("failed to decode referrers index: invalid
-              # character '<' looking for beginning of value"). When that
-              # happens, fall through to the fresh-build branch below
-              # instead of aborting the whole release.
-              RETAG_OK=true
+            if [ "${RETAG_OK}" = "true" ]; then
               if [ "${IS_PRERELEASE}" == "false" ]; then
-                docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}" || RETAG_OK=false
+                echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest"
               else
-                docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}" || RETAG_OK=false
+                echo "Promoted ${SOURCE} → ${NEW_TAG}"
               fi
-              if [ "${RETAG_OK}" = "true" ]; then
-                if [ "${IS_PRERELEASE}" == "false" ]; then
-                  echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest"
-                else
-                  echo "Promoted ${SOURCE} → ${NEW_TAG}"
-                fi
-                PROMOTED="true"
-              else
-                echo "::warning::imagetools retag of ${SOURCE} → ${NEW_TAG} failed; falling back to fresh build."
-              fi
+              PROMOTED="true"
             else
-              echo "Source not found: ${SOURCE}"
+              echo "::warning::docker pull/tag/push retag of ${SOURCE} → ${NEW_TAG} failed; falling back to fresh build."
             fi
           fi
 

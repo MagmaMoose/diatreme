@@ -68,8 +68,8 @@ Run from repository root unless noted.
     - `release-please`
   - Outputs are normalized into common `version`, `tag`, `released`, etc.
   - If Docker is enabled and a release was produced, image promotion runs:
-    - Prefer retagging existing source image/tag via `buildx imagetools create`.
-    - Fall back to fresh `buildx bake --push` when source cannot be resolved.
+    - Prefer retagging existing source image/tag via `docker pull/tag/push`.
+    - Fall back to fresh `buildx bake --push` when retagging fails.
   - Optional `tbd-pr` promotion PR creation writes a marker file under `.github/promotions/` and opens the next env PR.
 
 - Repository release publication flows:

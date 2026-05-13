@@ -34,12 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the ClickUp / Projects v2 metadata steps on GHE Server runners
   with `none of the git remotes configured for this repository
   point to a known GitHub host`.
-- The image-promotion step now falls back to a fresh build when
-  `docker buildx imagetools create` fails to retag the PR image.
-  Previously a hard failure mid-retag (notably against GHE Packages,
-  which returns an HTML 404 for the OCI referrers index and
-  produces `failed to decode referrers index: invalid character '<'
-  looking for beginning of value`) aborted the whole release before
-  the existing fresh-build branch could run.
+- The image-promotion retag path now uses standard `docker pull`,
+  `docker tag`, and `docker push` commands for cross-registry
+  compatibility (including GHE Packages), while preserving the
+  existing fresh-build fallback when retagging fails.
 
 <!-- semantic-release will append entries above this line -->
