@@ -1585,35 +1585,58 @@ runs:
           PROMOTED="false"
           if [ -n "${SOURCE_TAG_SUFFIX}" ]; then
             SOURCE="${IMAGE}:${SOURCE_TAG_SUFFIX}"
-            SOURCE_DIGEST=$(docker buildx imagetools inspect "${SOURCE}" \
-              --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || echo "")
 
-            if [ -n "${SOURCE_DIGEST}" ]; then
-              # `imagetools create` can fail mid-flight against registries
-              # that don't implement the OCI referrers index — notably GHE
-              # Packages, which returns an HTML 404 page where buildx
-              # expects JSON ("failed to decode referrers index: invalid
-              # character '<' looking for beginning of value"). When that
-              # happens, fall through to the fresh-build branch below
-              # instead of aborting the whole release.
-              RETAG_OK=true
-              if [ "${IS_PRERELEASE}" == "false" ]; then
-                docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}" || RETAG_OK=false
-              else
-                docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}" || RETAG_OK=false
-              fi
-              if [ "${RETAG_OK}" = "true" ]; then
-                if [ "${IS_PRERELEASE}" == "false" ]; then
-                  echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest"
-                else
-                  echo "Promoted ${SOURCE} → ${NEW_TAG}"
-                fi
-                PROMOTED="true"
-              else
-                echo "::warning::imagetools retag of ${SOURCE} → ${NEW_TAG} failed; falling back to fresh build."
-              fi
+            # Primary retag: `docker buildx imagetools create`. Preserves
+            # multi-arch manifest lists — a `docker pull` on a fat manifest
+            # would resolve to the runner's platform only and silently drop
+            # the other architectures. Works on every registry that
+            # implements the OCI referrers spec (ghcr.io, Docker Hub, ACR,
+            # Harbor, Artifactory, Nexus, etc.).
+            RETAG_OK=true
+            RETAG_METHOD="imagetools"
+            RETAG_ERR=$(mktemp)
+            if [ "${IS_PRERELEASE}" == "false" ]; then
+              docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
             else
-              echo "Source not found: ${SOURCE}"
+              docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
+            fi
+
+            # Fallback: when imagetools fails specifically with the GHE
+            # Packages referrers-index parse error (the registry returns
+            # an HTML 404 page where buildx expects JSON), retry via the
+            # plain Distribution V2 pull/tag/push flow. This loses
+            # multi-arch manifest lists, so we log it loudly and only
+            # take this path when the referrers signature is matched —
+            # not for generic retag failures.
+            if [ "${RETAG_OK}" != "true" ] && grep -q "failed to decode referrers index" "${RETAG_ERR}"; then
+              echo "::warning::imagetools retag failed on a referrers-index parse (likely GHE Packages). Falling back to docker pull/tag/push — multi-arch manifest lists will collapse to the runner's platform on this retag."
+              RETAG_OK=true
+              RETAG_METHOD="pull-tag-push"
+              docker pull "${SOURCE}" || RETAG_OK=false
+              if [ "${RETAG_OK}" == "true" ]; then
+                docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+                docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ]; then
+                docker push "${NEW_TAG}" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+                docker push "${IMAGE}:latest" || RETAG_OK=false
+              fi
+            fi
+            rm -f "${RETAG_ERR}"
+
+            if [ "${RETAG_OK}" == "true" ]; then
+              if [ "${IS_PRERELEASE}" == "false" ]; then
+                echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest via ${RETAG_METHOD}"
+              else
+                echo "Promoted ${SOURCE} → ${NEW_TAG} via ${RETAG_METHOD}"
+              fi
+              PROMOTED="true"
+            else
+              echo "::warning::retag of ${SOURCE} → ${NEW_TAG} failed (last method: ${RETAG_METHOD}); falling back to fresh build."
             fi
           fi
 
