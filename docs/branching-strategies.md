@@ -54,8 +54,8 @@ Two flavours in Release Runner:
   `promote/prod/...` PR cuts the stable tag (`deployment-model: tbd-pr`,
   `create-promotion-pr: true`).
 
-  Only one promotion PR per (target env) release series stays open at a
-  time. If another dev push happens before someone merges the existing
+  Only one open promotion PR per target environment exists at a time. If
+  another dev push happens before someone merges the existing
   `promote/staging/...` PR, the action refreshes the open PR's title and
   body to the latest tag instead of opening a second one. Reviewers click
   **Update Branch** on the existing PR before merging so the cut reflects

@@ -107,12 +107,13 @@ inputs:
       prerelease (deployment-model: tbd-pr only). Set to false when using the
       tbd-promote reusable workflow separately.
 
-      One PR per (target env) release series: if an open promotion PR already
-      exists for the next environment, its title and body are refreshed to the
-      latest tag instead of opening a duplicate. Reviewers should click
-      "Update Branch" on the existing PR before merging so the cut reflects
-      the latest commits on the target branch — the version in the PR title
-      is metadata; the cut version is derived from the merged commit history.
+      One open promotion PR per target environment: if an open promotion PR
+      already exists for the next environment (any version), its title and
+      body are refreshed to the latest tag instead of opening a duplicate.
+      Reviewers should click "Update Branch" on the existing PR before
+      merging so the cut reflects the latest commits on the target branch —
+      the version in the PR title is metadata; the cut version is derived
+      from the merged commit history.
     required: false
     default: 'false'
 
@@ -1655,13 +1656,13 @@ runs:
           fi
         }
 
-        # One promotion PR per (target env) release series. If one is
-        # already open, refresh its title + body to the latest tag and
-        # exit — don't pile up duplicates. The version in the title is
-        # metadata; the cut version comes from semantic-release running
-        # on whatever commit lands on the target branch at merge time,
-        # so we tell the reviewer to click "Update Branch" before
-        # merging to bring the latest commits in.
+        # One open promotion PR per target environment. If one is
+        # already open for NEXT_ENV (any version), refresh its title +
+        # body to the latest tag and exit — don't pile up duplicates.
+        # The version in the title is metadata; the cut version comes
+        # from semantic-release running on whatever commit lands on the
+        # target branch at merge time, so we tell the reviewer to click
+        # "Update Branch" before merging to bring the latest commits in.
         EXISTING_NUM=$(gh pr list \
           --state open --base "${TARGET}" \
           --json number,headRefName \
