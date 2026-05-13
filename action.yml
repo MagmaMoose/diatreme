@@ -1466,18 +1466,18 @@ runs:
             if [ "${RETAG_OK}" = "true" ]; then
               docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false
             fi
-            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" = "false" ]; then
               docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false
             fi
             if [ "${RETAG_OK}" = "true" ]; then
               docker push "${NEW_TAG}" || RETAG_OK=false
             fi
-            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+            if [ "${RETAG_OK}" = "true" ] && [ "${IS_PRERELEASE}" = "false" ]; then
               docker push "${IMAGE}:latest" || RETAG_OK=false
             fi
 
             if [ "${RETAG_OK}" = "true" ]; then
-              if [ "${IS_PRERELEASE}" == "false" ]; then
+              if [ "${IS_PRERELEASE}" = "false" ]; then
                 echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest"
               else
                 echo "Promoted ${SOURCE} → ${NEW_TAG}"
