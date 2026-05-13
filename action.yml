@@ -641,8 +641,13 @@ runs:
           exit 1
         fi
 
-        if ! [[ "${RAW}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-          echo "::error::version-override '${RAW}' is not a valid SemVer (expected examples: 3.20.0, 3.20.0-rc.1, v3.20.0)."
+        # Reject build metadata (`+...`). Strict SemVer allows it, but the
+        # resolved version is also used as a Docker tag downstream
+        # (`NEW_TAG="${IMAGE}:${TAG}"`) and Docker tags forbid `+`. Failing
+        # at validation gives the caller a clear error instead of an opaque
+        # registry-side failure after the tag is already cut.
+        if ! [[ "${RAW}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+          echo "::error::version-override '${RAW}' is not a Docker-compatible SemVer. Expected examples: 3.20.0, 3.20.0-rc.1, v3.20.0. Build metadata (e.g. '1.2.3+meta') is rejected because Docker tags forbid '+'."
           exit 1
         fi
 
@@ -1235,7 +1240,7 @@ runs:
             echo "released=false"     >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "::error::Failed to push tag ${TAG}."
+          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
           exit 1
         fi
 
