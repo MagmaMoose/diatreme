@@ -1,23 +1,32 @@
 #!/usr/bin/env bats
 
-@test "docker promotion retag uses pull/tag/push flow" {
-  run grep -F 'docker pull "${SOURCE}" || RETAG_OK=false' action.yml
-  [ "$status" -eq 0 ]
+# Behaviour-level assertions for the image-promotion retag flow. Loose
+# patterns (not full-line greps) so refactors that preserve semantics
+# don't break the test.
 
-  run grep -F 'docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false' action.yml
-  [ "$status" -eq 0 ]
-
-  run grep -F 'docker push "${NEW_TAG}" || RETAG_OK=false' action.yml
-  [ "$status" -eq 0 ]
-
-  run grep -F 'docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false' action.yml
-  [ "$status" -eq 0 ]
-
-  run grep -F 'docker push "${IMAGE}:latest" || RETAG_OK=false' action.yml
-  [ "$status" -eq 0 ]
+@test "imagetools create is the primary retag path (preserves multi-arch)" {
+  grep -Eq 'docker buildx imagetools create.*--tag.*NEW_TAG.*SOURCE' action.yml
 }
 
-@test "docker promotion no longer uses imagetools create for retag" {
-  run grep -F 'docker buildx imagetools create' action.yml
-  [ "$status" -ne 0 ]
+@test "stable promotion also tags :latest via imagetools create" {
+  grep -Eq 'docker buildx imagetools create.*--tag.*NEW_TAG.*--tag.*IMAGE.*:latest.*SOURCE' action.yml
+}
+
+@test "pull/tag/push fallback is gated on the referrers-index parse error" {
+  grep -Eq 'failed to decode referrers index' action.yml
+}
+
+@test "pull/tag/push fallback runs all four steps for prerelease retag" {
+  grep -Eq 'docker pull "?\$\{?SOURCE' action.yml
+  grep -Eq 'docker tag "?\$\{?SOURCE.*\$\{?NEW_TAG' action.yml
+  grep -Eq 'docker push "?\$\{?NEW_TAG' action.yml
+}
+
+@test "pull/tag/push fallback handles :latest for stable retag" {
+  grep -Eq 'docker tag "?\$\{?SOURCE.*\$\{?IMAGE.*:latest' action.yml
+  grep -Eq 'docker push "?\$\{?IMAGE.*:latest' action.yml
+}
+
+@test "pull/tag/push fallback warns about losing multi-arch" {
+  grep -Eq 'multi-arch' action.yml
 }
