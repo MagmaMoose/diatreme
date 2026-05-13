@@ -9,6 +9,12 @@
 
   run grep -F 'docker push "${NEW_TAG}" || RETAG_OK=false' action.yml
   [ "$status" -eq 0 ]
+
+  run grep -F 'docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false' action.yml
+  [ "$status" -eq 0 ]
+
+  run grep -F 'docker push "${IMAGE}:latest" || RETAG_OK=false' action.yml
+  [ "$status" -eq 0 ]
 }
 
 @test "docker promotion no longer uses imagetools create for retag" {
