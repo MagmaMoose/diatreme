@@ -628,11 +628,15 @@ runs:
       id: version-override
       if: (inputs.mode == 'ci' || inputs.mode == 'release') && inputs.version-override != ''
       shell: bash
+      env:
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
       run: |
         set -euo pipefail
-        RAW="${{ inputs.version-override }}"
+        RAW="${INPUT_VERSION_OVERRIDE}"
 
-        if [ -n "${{ inputs.force-bump }}" ]; then
+        if [ -n "${INPUT_FORCE_BUMP}" ]; then
           echo "::error::version-override and force-bump are mutually exclusive; set only one."
           exit 1
         fi
@@ -643,7 +647,7 @@ runs:
         fi
 
         VERSION="${RAW#v}"
-        TAG="${{ inputs.tag-prefix }}${VERSION}"
+        TAG="${INPUT_TAG_PREFIX}${VERSION}"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
@@ -1191,10 +1195,12 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        OVERRIDE_VERSION: ${{ steps.version-override.outputs.version }}
+        OVERRIDE_TAG: ${{ steps.version-override.outputs.tag }}
       run: |
         set -euo pipefail
-        VERSION="${{ steps.version-override.outputs.version }}"
-        TAG="${{ steps.version-override.outputs.tag }}"
+        VERSION="${OVERRIDE_VERSION}"
+        TAG="${OVERRIDE_TAG}"
 
         echo "Creating tag: ${TAG}"
         git config user.name  "github-actions[bot]"
@@ -1250,49 +1256,67 @@ runs:
       id: normalize
       if: inputs.mode == 'release'
       shell: bash
+      env:
+        INPUT_TOOL: ${{ inputs.versioning-tool }}
+        INPUT_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        OVERRIDE_TAG_VERSION: ${{ steps.version-override-tag.outputs.version }}
+        OVERRIDE_TAG_TAG: ${{ steps.version-override-tag.outputs.tag }}
+        OVERRIDE_TAG_RELEASED: ${{ steps.version-override-tag.outputs.released }}
+        PSR_VERSION: ${{ steps.psr.outputs.version }}
+        PSR_RELEASED: ${{ steps.psr.outputs.released }}
+        PSR_TAG: ${{ steps.psr.outputs.tag }}
+        SEMREL_NPM_LATEST_TAG: ${{ steps.semrel-npm.outputs.latest_tag }}
+        SEMREL_NPM_RELEASED: ${{ steps.semrel-npm.outputs.released }}
+        SEMREL_NPM_RELEASE_NOTES: ${{ steps.semrel-npm.outputs.release_notes }}
+        GITVERSION_TAG_VERSION: ${{ steps.gitversion-tag.outputs.version }}
+        GITVERSION_TAG_TAG: ${{ steps.gitversion-tag.outputs.tag }}
+        GITVERSION_TAG_RELEASED: ${{ steps.gitversion-tag.outputs.released }}
+        RELEASE_PLEASE_CREATED: ${{ steps.release-please.outputs.release_created }}
+        RELEASE_PLEASE_TAG_NAME: ${{ steps.release-please.outputs.tag_name }}
       run: |
         set -euo pipefail
-        TOOL="${{ inputs.versioning-tool }}"
-        PREFIX="${{ inputs.tag-prefix }}"
+        TOOL="${INPUT_TOOL}"
+        PREFIX="${INPUT_PREFIX}"
         VERSION=""
         RELEASED="false"
         TAG=""
         RELEASE_NOTES=""
-        if [ -n "${{ inputs.version-override }}" ]; then
-          VERSION="${{ steps.version-override-tag.outputs.version }}"
-          TAG="${{ steps.version-override-tag.outputs.tag }}"
-          RELEASED="${{ steps.version-override-tag.outputs.released }}"
+        if [ -n "${INPUT_VERSION_OVERRIDE}" ]; then
+          VERSION="${OVERRIDE_TAG_VERSION}"
+          TAG="${OVERRIDE_TAG_TAG}"
+          RELEASED="${OVERRIDE_TAG_RELEASED}"
         else
           case "${TOOL}" in
             semantic-release-python)
-              VERSION="${{ steps.psr.outputs.version }}"
-              RELEASED="${{ steps.psr.outputs.released }}"
-              TAG="${{ steps.psr.outputs.tag }}"
+              VERSION="${PSR_VERSION}"
+              RELEASED="${PSR_RELEASED}"
+              TAG="${PSR_TAG}"
               ;;
             semantic-release-npm)
-              LATEST_TAG="${{ steps.semrel-npm.outputs.latest_tag }}"
-              RELEASED="${{ steps.semrel-npm.outputs.released }}"
+              LATEST_TAG="${SEMREL_NPM_LATEST_TAG}"
+              RELEASED="${SEMREL_NPM_RELEASED}"
               if [ -n "${LATEST_TAG}" ]; then
                 VERSION="${LATEST_TAG#${PREFIX}}"
                 TAG="${LATEST_TAG}"
               fi
               # Only the prerelease branch emits release_notes; stable
               # and promotion-PR paths fall through to --generate-notes.
-              RELEASE_NOTES="${{ steps.semrel-npm.outputs.release_notes }}"
+              RELEASE_NOTES="${SEMREL_NPM_RELEASE_NOTES}"
               ;;
             gitversion)
-              VERSION="${{ steps.gitversion-tag.outputs.version }}"
-              TAG="${{ steps.gitversion-tag.outputs.tag }}"
+              VERSION="${GITVERSION_TAG_VERSION}"
+              TAG="${GITVERSION_TAG_TAG}"
               # The gitversion-tag step emits released=false when it
               # detects a parallel run beat us to publishing the same tag.
               # Default to true for the no-conflict case so existing
               # callers see no behaviour change.
-              RELEASED="${{ steps.gitversion-tag.outputs.released }}"
+              RELEASED="${GITVERSION_TAG_RELEASED}"
               [ -z "${RELEASED}" ] && RELEASED="true"
               ;;
             release-please)
-              if [ "${{ steps.release-please.outputs.release_created }}" == "true" ]; then
-                TAG="${{ steps.release-please.outputs.tag_name }}"
+              if [ "${RELEASE_PLEASE_CREATED}" == "true" ]; then
+                TAG="${RELEASE_PLEASE_TAG_NAME}"
                 VERSION="${TAG#${PREFIX}}"
                 RELEASED="true"
               fi
