@@ -1138,7 +1138,14 @@ runs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
         REMOTE_URL=$(git remote get-url origin)
-        AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+        if [[ "${REMOTE_URL}" =~ ^https:// ]]; then
+          AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+        elif [[ "${REMOTE_URL}" =~ ^git@([^:]+):(.+)$ ]]; then
+          AUTHED_URL="https://x-access-token:${GITHUB_TOKEN}@${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        else
+          echo "::error::Unsupported git remote URL format for authenticated tag push: ${REMOTE_URL}"
+          exit 1
+        fi
 
         # Concurrency safety: a parallel run on the same branch may have
         # raced us and already created this tag. Check the remote first;
@@ -1215,7 +1222,7 @@ runs:
             echo "released=false"     >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
+          echo "::error::Failed to push tag ${TAG}."
           exit 1
         fi
 
@@ -1245,7 +1252,6 @@ runs:
         TAG=""
         RELEASE_NOTES=""
         if [ -n "${{ inputs.version-override }}" ]; then
-          TOOL="version-override"
           VERSION="${{ steps.version-override-tag.outputs.version }}"
           TAG="${{ steps.version-override-tag.outputs.tag }}"
           RELEASED="${{ steps.version-override-tag.outputs.released }}"
