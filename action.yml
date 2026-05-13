@@ -1201,7 +1201,14 @@ runs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
         REMOTE_URL=$(git remote get-url origin)
-        AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+        if [[ "${REMOTE_URL}" =~ ^https:// ]]; then
+          AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+        elif [[ "${REMOTE_URL}" =~ ^git@([^:]+):(.+)$ ]]; then
+          AUTHED_URL="https://x-access-token:${GITHUB_TOKEN}@${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        else
+          echo "::error::Unsupported git remote URL format for authenticated tag push: ${REMOTE_URL}"
+          exit 1
+        fi
 
         if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
           echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
