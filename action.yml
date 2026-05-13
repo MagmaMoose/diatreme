@@ -106,6 +106,14 @@ inputs:
       When true, automatically creates the next environment promotion PR after a
       prerelease (deployment-model: tbd-pr only). Set to false when using the
       tbd-promote reusable workflow separately.
+
+      One open promotion PR per target environment: if an open promotion PR
+      already exists for the next environment (any version), its title and
+      body are refreshed to the latest tag instead of opening a duplicate.
+      Reviewers should click "Update Branch" on the existing PR before
+      merging so the cut reflects the latest commits on the target branch —
+      the version in the PR title is metadata; the cut version is derived
+      from the merged commit history.
     required: false
     default: 'false'
 
@@ -1624,8 +1632,64 @@ runs:
 
         ENV_INDEX=$(echo "${ENVS}" | jq -r --arg e "${ENV}" 'index($e)')
         NEXT_ENV=$(echo "${ENVS}" | jq -r --argjson i "${ENV_INDEX}" '.[$i + 1]')
-        BRANCH="${PREFIX}/${NEXT_ENV}/${VERSION}"
+        TITLE="chore(release): promote ${TAG} to ${NEXT_ENV}"
 
+        # Build a rich body so reviewers see the originating PR, the
+        # full PR list in the range, and the source/target environments
+        # without clicking through. Falls back to a one-line body if
+        # the script errors for any reason — never block PR creation.
+        render_body() {
+          local out="$1"
+          if env \
+              GH_TOKEN="${GH_TOKEN}" \
+              OWNER="${OWNER}" REPO="${REPO}" \
+              TAG="${TAG}" VERSION="${VERSION}" \
+              ENV="${ENV}" NEXT_ENV="${NEXT_ENV}" \
+              PRERELEASE_IDENTIFIER="${PRERELEASE_IDENTIFIER}" \
+              "${GITHUB_ACTION_PATH}/scripts/build-promotion-pr-body.sh" > "${out}" 2>/dev/null \
+              && [ -s "${out}" ]; then
+            echo "Using enriched PR body ($(wc -l < "${out}") lines)."
+          else
+            echo "::warning::Could not render enriched PR body — falling back to one-liner."
+            printf 'Merging this PR will trigger the **%s** release for `%s`.\n' \
+              "${NEXT_ENV}" "${TAG}" > "${out}"
+          fi
+        }
+
+        # One open promotion PR per target environment. If one is
+        # already open for NEXT_ENV (any version), refresh its title +
+        # body to the latest tag and exit — don't pile up duplicates.
+        # The version in the title is metadata; the cut version comes
+        # from semantic-release running on whatever commit lands on the
+        # target branch at merge time, so we tell the reviewer to click
+        # "Update Branch" before merging to bring the latest commits in.
+        EXISTING_NUM=$(gh pr list \
+          --state open --base "${TARGET}" \
+          --json number,headRefName \
+          --jq "first(.[] | select(.headRefName | startswith(\"${PREFIX}/${NEXT_ENV}/\")) | .number) // empty")
+
+        if [ -n "${EXISTING_NUM}" ]; then
+          echo "Refreshing existing promotion PR #${EXISTING_NUM} to ${TAG}"
+          BODY_FILE=$(mktemp)
+          render_body "${BODY_FILE}"
+          # Prepend a callout so reviewers know to click Update Branch.
+          TMP=$(mktemp)
+          {
+            printf '> **Latest available:** `%s`. Click **Update Branch** on this PR before merging so the cut reflects the latest commits on `%s`.\n\n' \
+              "${TAG}" "${TARGET}"
+            cat "${BODY_FILE}"
+          } > "${TMP}"
+          mv "${TMP}" "${BODY_FILE}"
+          gh pr edit "${EXISTING_NUM}" \
+            --title "${TITLE}" \
+            --body-file "${BODY_FILE}"
+          gh pr edit "${EXISTING_NUM}" --add-label "promotion" 2>/dev/null || true
+          echo "::notice::Promotion PR #${EXISTING_NUM} refreshed to ${TAG} — no new PR opened."
+          exit 0
+        fi
+
+        # No existing PR for this env — open a fresh one.
+        BRANCH="${PREFIX}/${NEXT_ENV}/${VERSION}"
         echo "Creating promotion PR: ${BRANCH} → ${TARGET}"
 
         git config user.name  "github-actions[bot]"
@@ -1636,34 +1700,17 @@ runs:
         printf 'Promote %s to %s.\n' "${TAG}" "${NEXT_ENV}" > ".github/promotions/${VERSION}-to-${NEXT_ENV}.md"
 
         git add ".github/promotions/${VERSION}-to-${NEXT_ENV}.md"
-        git commit -m "chore(release): promote ${TAG} to ${NEXT_ENV}"
+        git commit -m "${TITLE}"
 
         REMOTE_URL=$(git remote get-url origin)
         AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")
         git push "${AUTHED_URL}" "${BRANCH}"
 
-        # Build a rich body so reviewers see the originating PR, the
-        # full PR list in the range, and the source/target environments
-        # without clicking through. Falls back to a one-line body if
-        # the script errors for any reason — never block PR creation.
         BODY_FILE=$(mktemp)
-        if env \
-            GH_TOKEN="${GH_TOKEN}" \
-            OWNER="${OWNER}" REPO="${REPO}" \
-            TAG="${TAG}" VERSION="${VERSION}" \
-            ENV="${ENV}" NEXT_ENV="${NEXT_ENV}" \
-            PRERELEASE_IDENTIFIER="${PRERELEASE_IDENTIFIER}" \
-            "${GITHUB_ACTION_PATH}/scripts/build-promotion-pr-body.sh" > "${BODY_FILE}" 2>/dev/null \
-            && [ -s "${BODY_FILE}" ]; then
-          echo "Using enriched PR body ($(wc -l < "${BODY_FILE}") lines)."
-        else
-          echo "::warning::Could not render enriched PR body — falling back to one-liner."
-          printf 'Merging this PR will trigger the **%s** release for `%s`.\n' \
-            "${NEXT_ENV}" "${TAG}" > "${BODY_FILE}"
-        fi
+        render_body "${BODY_FILE}"
 
         PR_URL=$(gh pr create \
-          --title "chore(release): promote ${TAG} to ${NEXT_ENV}" \
+          --title "${TITLE}" \
           --body-file "${BODY_FILE}" \
           --base "${TARGET}" \
           --head "${BRANCH}") || { echo "::warning::PR already exists for ${BRANCH}"; exit 0; }
