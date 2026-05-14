@@ -30,6 +30,7 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "changelog",
     "working-directory",
     "force-bump",
+    "version-override",
   ]),
   ("Deployment model", [
     "deployment-model",

@@ -430,6 +430,19 @@ inputs:
     required: false
     default: ''
 
+  version-override:
+    description: |
+      Explicit version to release/build. Accepts SemVer with optional `v`
+      prefix, e.g. `3.20.0` or `v3.20.0-rc.1`.
+
+      When set, release-runner skips automatic version calculation and uses
+      this value for release tag/image versioning. The optional `v` prefix is
+      stripped only for `${VERSION}` substitution in bake/build args.
+
+      Mutually exclusive with `force-bump`.
+    required: false
+    default: ''
+
   # ── Version file injection (any tool) ─────────────────────────────────────
   version-file:
     description: |
@@ -611,6 +624,39 @@ runs:
         PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-branch-naming.sh"
 
+    - name: Validate version override
+      id: version-override
+      if: (inputs.mode == 'ci' || inputs.mode == 'release') && inputs.version-override != ''
+      shell: bash
+      env:
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        set -euo pipefail
+        RAW="${INPUT_VERSION_OVERRIDE}"
+
+        if [ -n "${INPUT_FORCE_BUMP}" ]; then
+          echo "::error::version-override and force-bump are mutually exclusive; set only one."
+          exit 1
+        fi
+
+        # Reject build metadata (`+...`). Strict SemVer allows it, but the
+        # resolved version is also used as a Docker tag downstream
+        # (`NEW_TAG="${IMAGE}:${TAG}"`) and Docker tags forbid `+`. Failing
+        # at validation gives the caller a clear error instead of an opaque
+        # registry-side failure after the tag is already cut.
+        if ! [[ "${RAW}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+          echo "::error::version-override '${RAW}' is not a Docker-compatible SemVer. Expected examples: 3.20.0, 3.20.0-rc.1, v3.20.0. Build metadata (e.g. '1.2.3+meta') is rejected because Docker tags forbid '+'."
+          exit 1
+        fi
+
+        VERSION="${RAW#v}"
+        TAG="${INPUT_TAG_PREFIX}${VERSION}"
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+
     - name: Set up QEMU
       if: inputs.mode == 'ci' && inputs.image_name != ''
       uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -631,7 +677,7 @@ runs:
       if: inputs.mode == 'ci' && inputs.image_name != ''
       shell: bash
       env:
-        VERSION: pr-${{ github.event.pull_request.number }}
+        VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
         REGISTRY: ${{ inputs.registry }}
         PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
@@ -858,7 +904,7 @@ runs:
 
     - name: Run python-semantic-release
       id: psr
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-python'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-python'
       uses: python-semantic-release/python-semantic-release@v10
       with:
         github_token: ${{ steps.auth.outputs.token }}
@@ -882,14 +928,14 @@ runs:
         directory: ${{ inputs.working-directory }}
 
     - name: Set up Node.js (semantic-release-npm)
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       uses: actions/setup-node@v6
       with:
         node-version: '20'
 
     - name: Run semantic-release (npm)
       id: semrel-npm
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -1063,14 +1109,14 @@ runs:
         fi
 
     - name: Install GitVersion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/setup@v4
       with:
         versionSpec: ${{ inputs.gitversion-spec }}
 
     - name: Execute GitVersion
       id: gitversion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/execute@v4
       with:
         configFilePath: ${{ inputs.gitversion-config }}
@@ -1089,7 +1135,7 @@ runs:
 
     - name: Create GitVersion release tag
       id: gitversion-tag
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
@@ -1117,53 +1163,43 @@ runs:
         fi
         TAG="${PREFIX}${VERSION}"
         echo "Creating tag: ${TAG}"
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        REMOTE_URL=$(git remote get-url origin)
-        AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
-
-        # Concurrency safety: a parallel run on the same branch may have
-        # raced us and already created this tag. Check the remote first;
-        # if the tag exists, treat it as "released" (the parallel run
-        # owns it) and skip re-publishing — otherwise tag and push,
-        # detecting the same race in the push-failure branch as a
-        # belt-and-suspenders.
-        if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-          echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-          echo "released=false"     >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        git tag -a "${TAG}" -m "chore(release): ${TAG}"
-
-        if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
-          # Re-check the remote — if the tag now exists, another run beat
-          # us between the ls-remote and the push. That's a clean race
-          # outcome: continue gracefully without failing the workflow.
-          if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-            echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race). Skipping downstream steps."
-            git tag -d "${TAG}" 2>/dev/null || true
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-            echo "released=false"     >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
-          exit 1
-        fi
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
         # GitHub Release is published in a later step, after image
         # promotion, so downstream `release:published` listeners see
         # versioned images in the registry.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+
+    - name: Create version-override release tag
+      id: version-override-tag
+      if: inputs.mode == 'release' && inputs.version-override != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        OVERRIDE_VERSION: ${{ steps.version-override.outputs.version }}
+        OVERRIDE_TAG: ${{ steps.version-override.outputs.tag }}
+      run: |
+        set -euo pipefail
+        VERSION="${OVERRIDE_VERSION}"
+        TAG="${OVERRIDE_TAG}"
+        echo "Creating tag: ${TAG}"
+
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
 
     - name: Run release-please
       id: release-please
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'release-please'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'release-please'
       uses: googleapis/release-please-action@v5
       with:
         token: ${{ steps.auth.outputs.token }}
@@ -1177,6 +1213,10 @@ runs:
       env:
         INPUT_TOOL: ${{ inputs.versioning-tool }}
         INPUT_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        OVERRIDE_TAG_VERSION: ${{ steps.version-override-tag.outputs.version }}
+        OVERRIDE_TAG_TAG: ${{ steps.version-override-tag.outputs.tag }}
+        OVERRIDE_TAG_RELEASED: ${{ steps.version-override-tag.outputs.released }}
         PSR_VERSION: ${{ steps.psr.outputs.version }}
         PSR_RELEASED: ${{ steps.psr.outputs.released }}
         PSR_TAG: ${{ steps.psr.outputs.tag }}
@@ -1196,41 +1236,47 @@ runs:
         RELEASED="false"
         TAG=""
         RELEASE_NOTES=""
-        case "${TOOL}" in
-          semantic-release-python)
-            VERSION="${PSR_VERSION}"
-            RELEASED="${PSR_RELEASED}"
-            TAG="${PSR_TAG}"
-            ;;
-          semantic-release-npm)
-            LATEST_TAG="${SEMREL_NPM_LATEST_TAG}"
-            RELEASED="${SEMREL_NPM_RELEASED}"
-            if [ -n "${LATEST_TAG}" ]; then
-              VERSION="${LATEST_TAG#${PREFIX}}"
-              TAG="${LATEST_TAG}"
-            fi
-            # Only the prerelease branch emits release_notes; stable
-            # and promotion-PR paths fall through to --generate-notes.
-            RELEASE_NOTES="${SEMREL_NPM_RELEASE_NOTES}"
-            ;;
-          gitversion)
-            VERSION="${GITVERSION_TAG_VERSION}"
-            TAG="${GITVERSION_TAG_TAG}"
-            # The gitversion-tag step emits released=false when it
-            # detects a parallel run beat us to publishing the same tag.
-            # Default to true for the no-conflict case so existing
-            # callers see no behaviour change.
-            RELEASED="${GITVERSION_TAG_RELEASED}"
-            [ -z "${RELEASED}" ] && RELEASED="true"
-            ;;
-          release-please)
-            if [ "${RELEASE_PLEASE_CREATED}" == "true" ]; then
-              TAG="${RELEASE_PLEASE_TAG_NAME}"
-              VERSION="${TAG#${PREFIX}}"
-              RELEASED="true"
-            fi
-            ;;
-        esac
+        if [ -n "${INPUT_VERSION_OVERRIDE}" ]; then
+          VERSION="${OVERRIDE_TAG_VERSION}"
+          TAG="${OVERRIDE_TAG_TAG}"
+          RELEASED="${OVERRIDE_TAG_RELEASED}"
+        else
+          case "${TOOL}" in
+            semantic-release-python)
+              VERSION="${PSR_VERSION}"
+              RELEASED="${PSR_RELEASED}"
+              TAG="${PSR_TAG}"
+              ;;
+            semantic-release-npm)
+              LATEST_TAG="${SEMREL_NPM_LATEST_TAG}"
+              RELEASED="${SEMREL_NPM_RELEASED}"
+              if [ -n "${LATEST_TAG}" ]; then
+                VERSION="${LATEST_TAG#${PREFIX}}"
+                TAG="${LATEST_TAG}"
+              fi
+              # Only the prerelease branch emits release_notes; stable
+              # and promotion-PR paths fall through to --generate-notes.
+              RELEASE_NOTES="${SEMREL_NPM_RELEASE_NOTES}"
+              ;;
+            gitversion)
+              VERSION="${GITVERSION_TAG_VERSION}"
+              TAG="${GITVERSION_TAG_TAG}"
+              # The gitversion-tag step emits released=false when it
+              # detects a parallel run beat us to publishing the same tag.
+              # Default to true for the no-conflict case so existing
+              # callers see no behaviour change.
+              RELEASED="${GITVERSION_TAG_RELEASED}"
+              [ -z "${RELEASED}" ] && RELEASED="true"
+              ;;
+            release-please)
+              if [ "${RELEASE_PLEASE_CREATED}" == "true" ]; then
+                TAG="${RELEASE_PLEASE_TAG_NAME}"
+                VERSION="${TAG#${PREFIX}}"
+                RELEASED="true"
+              fi
+              ;;
+          esac
+        fi
         if [ -z "${VERSION}" ]; then
           LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "${LATEST}" ]; then
