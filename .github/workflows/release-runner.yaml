@@ -1,6 +1,6 @@
 name: Release Runner (with concurrency)
 
-# Reusable workflow wrapper around calebsargeant/semantic-release.
+# Reusable workflow wrapper around magmamoose/release-runner.
 #
 # Why this exists alongside the composite action:
 #   The action is a composite action — it runs *inside* a job that the
@@ -22,7 +22,7 @@ name: Release Runner (with concurrency)
 #
 #   jobs:
 #     release:
-#       uses: calebsargeant/semantic-release/.github/workflows/release-runner.yaml@v1
+#       uses: magmamoose/release-runner/.github/workflows/release-runner.yaml@v1
 #       permissions:
 #         contents: read
 #         id-token: write
@@ -35,7 +35,7 @@ name: Release Runner (with concurrency)
 #       secrets:
 #         app-private-key: ${{ secrets.SEMANTIC_RELEASE_APP_PRIVATE_KEY }}
 #
-# Direct action usage (`uses: calebsargeant/semantic-release@v1`) still
+# Direct action usage (`uses: magmamoose/release-runner@v1`) still
 # works and is unchanged — pick this wrapper when you want the lock
 # without thinking about it, pick the action when you have a more
 # unusual setup.
@@ -252,7 +252,7 @@ jobs:
       resolved-environment: ${{ steps.run.outputs.resolved-environment }}
     steps:
       - id: run
-        uses: calebsargeant/semantic-release@v1
+        uses: magmamoose/release-runner@e88a8245037aab4f1c030852048efcdd4e54991b # v1
         with:
           mode: ${{ inputs.mode }}
           auth-mode: ${{ inputs.auth-mode }}
