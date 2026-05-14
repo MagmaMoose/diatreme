@@ -1294,22 +1294,27 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        INPUT_VERSION_FILE: ${{ inputs.version-file }}
+        INPUT_VERSION_FILE_JSON_PATH: ${{ inputs.version-file-json-path }}
+        INPUT_GITVERSION_APPSETTINGS_FILE: ${{ inputs.gitversion-appsettings-file }}
+        INPUT_GITVERSION_APPSETTINGS_VERSION_PATH: ${{ inputs.gitversion-appsettings-version-path }}
       run: |
         set -euo pipefail
 
         # Prefer the new generic input. Fall back to the deprecated gitversion-prefixed
         # alias so existing callers keep working.
-        FILE="${{ inputs.version-file }}"
-        JSON_PATH="${{ inputs.version-file-json-path }}"
+        FILE="${INPUT_VERSION_FILE}"
+        JSON_PATH="${INPUT_VERSION_FILE_JSON_PATH}"
         if [ -z "${FILE}" ]; then
-          FILE="${{ inputs.gitversion-appsettings-file }}"
-          if [ -n "${{ inputs.gitversion-appsettings-version-path }}" ]; then
-            JSON_PATH="${{ inputs.gitversion-appsettings-version-path }}"
+          FILE="${INPUT_GITVERSION_APPSETTINGS_FILE}"
+          if [ -n "${INPUT_GITVERSION_APPSETTINGS_VERSION_PATH}" ]; then
+            JSON_PATH="${INPUT_GITVERSION_APPSETTINGS_VERSION_PATH}"
           fi
           echo "::notice::gitversion-appsettings-file is deprecated; use version-file."
         fi
 
-        VERSION="${{ steps.normalize.outputs.version }}"
+        VERSION="${NORMALIZE_VERSION}"
 
         if [ ! -f "${FILE}" ]; then
           echo "::warning::version-file '${FILE}' not found — skipping injection."
@@ -1416,11 +1421,13 @@ runs:
       env:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
       run: |
         set -euo pipefail
 
-        VERSION="${{ steps.normalize.outputs.version }}"
-        TAG="${{ steps.normalize.outputs.tag }}"
+        VERSION="${NORMALIZE_VERSION}"
+        TAG="${NORMALIZE_TAG}"
         ENV="${{ steps.detect-env.outputs.environment }}"
         IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
         DEPLOY_MODEL="${{ inputs.deployment-model }}"
@@ -1623,9 +1630,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        NORMALIZE_RELEASE_NOTES: ${{ steps.normalize.outputs.release_notes }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
       run: |
         set -euo pipefail
-        TAG="${{ steps.normalize.outputs.tag }}"
+        TAG="${NORMALIZE_TAG}"
         if [ -z "${TAG}" ]; then
           echo "::warning::No tag resolved by normalize step — skipping release publish."
           exit 0
@@ -1635,7 +1645,7 @@ runs:
           exit 0
         fi
         PRE_FLAG=""
-        if [ "${{ steps.detect-env.outputs.is_prerelease }}" == "true" ]; then
+        if [ "${DETECT_IS_PRERELEASE}" == "true" ]; then
           PRE_FLAG="--prerelease"
         fi
         # Preserve any per-path custom release notes the tagging step
@@ -1644,7 +1654,7 @@ runs:
         # paths that don't emit one fall back to GitHub's auto-generated
         # notes which include the PRs and contributors in the release
         # range. Using an array avoids word-splitting the notes string.
-        NOTES="${{ steps.normalize.outputs.release_notes }}"
+        NOTES="${NORMALIZE_RELEASE_NOTES}"
         NOTES_FLAGS=(--generate-notes)
         if [ -n "${NOTES}" ]; then
           NOTES_FLAGS=(--notes "${NOTES}")
@@ -1697,11 +1707,13 @@ runs:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
         OWNER: ${{ github.repository_owner }}
         REPO: ${{ github.event.repository.name }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
       run: |
         set -euo pipefail
 
-        VERSION="${{ steps.normalize.outputs.version }}"
-        TAG="${{ steps.normalize.outputs.tag }}"
+        VERSION="${NORMALIZE_VERSION}"
+        TAG="${NORMALIZE_TAG}"
         ENV="${{ steps.detect-env.outputs.environment }}"
         PRERELEASE_IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
         ENVS='${{ inputs.environments }}'
