@@ -1,6 +1,6 @@
 name: TBD Release — Version & Promote
 
-# Thin wrapper around calebsargeant/semantic-release@v1 (mode: release).
+# Thin wrapper around magmamoose/release-runner@v1 (mode: release).
 # Prefer using the action directly for full control:
 #
 #   jobs:
@@ -11,7 +11,7 @@ name: TBD Release — Version & Promote
 #         packages: write
 #         id-token: write
 #       steps:
-#         - uses: calebsargeant/semantic-release@v1
+#         - uses: magmamoose/release-runner@v1
 #           with:
 #             mode: release
 #             deployment-model: tbd-pr
@@ -194,7 +194,7 @@ jobs:
       prerelease-identifier: ${{ steps.tbd.outputs.prerelease-identifier }}
       resolved-environment: ${{ steps.tbd.outputs.resolved-environment }}
     steps:
-      - uses: calebsargeant/semantic-release@v1
+      - uses: magmamoose/release-runner@e88a8245037aab4f1c030852048efcdd4e54991b # v1
         id: tbd
         with:
           mode:                        release
