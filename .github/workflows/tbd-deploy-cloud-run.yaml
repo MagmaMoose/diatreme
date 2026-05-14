@@ -148,12 +148,16 @@ jobs:
       - name: Validate release tag
         id: release-tag
         shell: bash
+        env:
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+          INPUT_VERSION_TYPE: ${{ inputs.version_type }}
+          INPUT_PRERELEASE_IDENTIFIER: ${{ inputs.prerelease_identifier }}
         run: |
           set -euo pipefail
 
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION_TYPE="${{ inputs.version_type }}"
-          IDENTIFIER="${{ inputs.prerelease_identifier }}"
+          TAG="${RELEASE_TAG_NAME}"
+          VERSION_TYPE="${INPUT_VERSION_TYPE}"
+          IDENTIFIER="${INPUT_PRERELEASE_IDENTIFIER}"
 
           if [ -z "${TAG}" ]; then
             echo "::error::Release tag is empty; refusing to deploy."
@@ -210,19 +214,25 @@ jobs:
 
       - name: Configure Docker for GAR
         shell: bash
-        run: gcloud auth configure-docker ${{ inputs.region }}-docker.pkg.dev --quiet
+        env:
+          INPUT_REGION: ${{ inputs.region }}
+        run: gcloud auth configure-docker "${INPUT_REGION}-docker.pkg.dev" --quiet
 
       - name: Resolve GHCR image reference
         id: resolve-image
         shell: bash
+        env:
+          OWNER: ${{ github.repository_owner }}
+          INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
         run: |
           set -euo pipefail
 
-          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_NAME="${OWNER_LOWER}/${{ inputs.image_name }}"
+          OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
           REGISTRY="ghcr.io"
 
-          TAG="${{ steps.release-tag.outputs.tag }}"
+          TAG="${RELEASE_TAG}"
 
           GHCR_IMAGE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
           echo "ghcr_image=${GHCR_IMAGE}" >> "$GITHUB_OUTPUT"
@@ -232,12 +242,16 @@ jobs:
       - name: Mirror image from GHCR to GAR
         id: mirror
         shell: bash
+        env:
+          RESOLVED_GHCR_IMAGE: ${{ steps.resolve-image.outputs.ghcr_image }}
+          RESOLVED_IMAGE_TAG: ${{ steps.resolve-image.outputs.image_tag }}
+          INPUT_GAR_IMAGE: ${{ inputs.gar_image }}
         run: |
           set -euo pipefail
 
-          GHCR_IMAGE="${{ steps.resolve-image.outputs.ghcr_image }}"
-          IMAGE_TAG="${{ steps.resolve-image.outputs.image_tag }}"
-          GAR_FULL_IMAGE="${{ inputs.gar_image }}:${IMAGE_TAG}"
+          GHCR_IMAGE="${RESOLVED_GHCR_IMAGE}"
+          IMAGE_TAG="${RESOLVED_IMAGE_TAG}"
+          GAR_FULL_IMAGE="${INPUT_GAR_IMAGE}:${IMAGE_TAG}"
 
           echo "Mirroring ${GHCR_IMAGE} → ${GAR_FULL_IMAGE}"
           docker buildx imagetools create --tag "${GAR_FULL_IMAGE}" "${GHCR_IMAGE}"
@@ -248,47 +262,62 @@ jobs:
       - name: Deploy to Cloud Run
         id: cloud-run-deploy
         shell: bash
+        env:
+          INPUT_SERVICE: ${{ inputs.service }}
+          INPUT_REGION: ${{ inputs.region }}
+          INPUT_PORT: ${{ inputs.port }}
+          INPUT_CPU: ${{ inputs.cpu }}
+          INPUT_MEMORY: ${{ inputs.memory }}
+          INPUT_MIN_INSTANCES: ${{ inputs.min_instances }}
+          INPUT_MAX_INSTANCES: ${{ inputs.max_instances }}
+          INPUT_CONCURRENCY: ${{ inputs.concurrency }}
+          INPUT_TIMEOUT: ${{ inputs.timeout }}
+          INPUT_ALLOW_UNAUTHENTICATED: ${{ inputs.allow_unauthenticated }}
+          INPUT_SERVICE_ACCOUNT: ${{ inputs.service_account }}
+          INPUT_ENV_VARS: ${{ inputs.env_vars }}
+          INPUT_GCLOUD_SECRETS: ${{ inputs.gcloud_secrets }}
+          MIRROR_GAR_FULL_IMAGE: ${{ steps.mirror.outputs.gar_full_image }}
         run: |
           set -euo pipefail
 
           CMD=(
-            gcloud run deploy "${{ inputs.service }}"
-            "--image=${{ steps.mirror.outputs.gar_full_image }}"
-            "--region=${{ inputs.region }}"
+            gcloud run deploy "${INPUT_SERVICE}"
+            "--image=${MIRROR_GAR_FULL_IMAGE}"
+            "--region=${INPUT_REGION}"
             --platform=managed
-            "--port=${{ inputs.port }}"
-            "--cpu=${{ inputs.cpu }}"
-            "--memory=${{ inputs.memory }}"
-            "--min-instances=${{ inputs.min_instances }}"
-            "--max-instances=${{ inputs.max_instances }}"
-            "--concurrency=${{ inputs.concurrency }}"
-            "--timeout=${{ inputs.timeout }}"
+            "--port=${INPUT_PORT}"
+            "--cpu=${INPUT_CPU}"
+            "--memory=${INPUT_MEMORY}"
+            "--min-instances=${INPUT_MIN_INSTANCES}"
+            "--max-instances=${INPUT_MAX_INSTANCES}"
+            "--concurrency=${INPUT_CONCURRENCY}"
+            "--timeout=${INPUT_TIMEOUT}"
             --quiet
           )
 
-          if [[ "${{ inputs.allow_unauthenticated }}" == "true" ]]; then
+          if [[ "${INPUT_ALLOW_UNAUTHENTICATED}" == "true" ]]; then
             CMD+=(--allow-unauthenticated)
           else
             CMD+=(--no-allow-unauthenticated)
           fi
 
-          if [[ -n "${{ inputs.service_account }}" ]]; then
-            CMD+=("--service-account=${{ inputs.service_account }}")
+          if [[ -n "${INPUT_SERVICE_ACCOUNT}" ]]; then
+            CMD+=("--service-account=${INPUT_SERVICE_ACCOUNT}")
           fi
 
-          if [[ -n "${{ inputs.env_vars }}" ]]; then
-            CMD+=("--set-env-vars=${{ inputs.env_vars }}")
+          if [[ -n "${INPUT_ENV_VARS}" ]]; then
+            CMD+=("--set-env-vars=${INPUT_ENV_VARS}")
           fi
 
-          if [[ -n "${{ inputs.gcloud_secrets }}" ]]; then
-            CMD+=("--update-secrets=${{ inputs.gcloud_secrets }}")
+          if [[ -n "${INPUT_GCLOUD_SECRETS}" ]]; then
+            CMD+=("--update-secrets=${INPUT_GCLOUD_SECRETS}")
           fi
 
           echo "Deploying to Cloud Run..."
           "${CMD[@]}"
 
-          URL=$(gcloud run services describe "${{ inputs.service }}" \
-            "--region=${{ inputs.region }}" \
+          URL=$(gcloud run services describe "${INPUT_SERVICE}" \
+            "--region=${INPUT_REGION}" \
             --format='value(status.url)')
           echo "url=${URL}" >> "$GITHUB_OUTPUT"
           echo "Deployed: ${URL}"
