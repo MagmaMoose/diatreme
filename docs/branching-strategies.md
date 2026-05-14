@@ -54,6 +54,13 @@ Two flavours in Release Runner:
   `promote/prod/...` PR cuts the stable tag (`deployment-model: tbd-pr`,
   `create-promotion-pr: true`).
 
+  Only one open promotion PR per target environment exists at a time. If
+  another dev push happens before someone merges the existing
+  `promote/staging/...` PR, the action refreshes the open PR's title and
+  body to the latest tag instead of opening a second one. Reviewers click
+  **Update Branch** on the existing PR before merging so the cut reflects
+  the latest commits on the target branch.
+
 ```yaml
 # TBD with promotion PRs
 with:
@@ -192,6 +199,11 @@ with:
 Keys with `*` in `branch-map` are matched as anchored globs. Exact matches
 always win; among glob matches the longest key wins so a more specific
 pattern like `release/hotfix/*` beats `release/*`.
+
+`master` and `main` are interchangeable in the exact-match step. The map
+above uses `"main"` and works unchanged on a repo whose default branch is
+still `master` — the resolver falls back to the alias when no exact entry
+exists. Add an explicit entry for either name to override.
 
 ### Versioning notes for strict GitFlow
 

@@ -110,7 +110,21 @@ Allowed values:
 | `patch` | Force a patch bump (e.g. 1.2.3 → 1.2.4). |
 | `minor` | Force a minor bump (e.g. 1.2.3 → 1.3.0). |
 | `major` | Force a major bump (e.g. 1.2.3 → 2.0.0). |
-| `''` | (default) Let the versioning tool decide. Honoured by: - semantic-release-python: passed as the upstream `force` input. - gitversion: passed as `/overrideconfig increment=Major|Minor|Patch`. Ignored by semantic-release-npm and release-please — those tools have no clean equivalent and a forced bump would conflict with the tool's own logic. Wire your `workflow_dispatch` `bump` input to this input from the caller workflow. |
+| `''` | (default) Let the versioning tool decide. Honoured by: - semantic-release-python: passed as the upstream `force` input. - gitversion: passed to gittools/actions@v4 as `overrideConfig: increment=Major|Minor|Patch`. Ignored by semantic-release-npm and release-please — those tools have no clean equivalent and a forced bump would conflict with the tool's own logic. Wire your `workflow_dispatch` `bump` input to this input from the caller workflow. |
+
+#### `version-override`
+
+- Required: `false`
+- Default: `''`
+
+Explicit version to release/build. Accepts SemVer with optional `v`
+prefix, e.g. `3.20.0` or `v3.20.0-rc.1`.
+
+When set, release-runner skips automatic version calculation and uses
+this value for release tag/image versioning. The optional `v` prefix is
+stripped only for `${VERSION}` substitution in bake/build args.
+
+Mutually exclusive with `force-bump`.
 
 ### Deployment model
 
@@ -148,6 +162,12 @@ Exact matches always win over globs. When two globs both match, the
 one with the longer key wins, so a specific pattern like
 `release/hotfix/*` beats `release/*`.
 
+`master` and `main` are interchangeable for exact-match lookup —
+a branch-map entry for `"main"` will match a `master`-default repo
+and vice versa, so the same map works across repos that haven't
+finished renaming. An explicit entry for either always wins over
+the implicit alias.
+
 #### `promote-branch-prefix`
 
 - Required: `false`
@@ -171,6 +191,14 @@ Target branch for promotion PRs.
 When true, automatically creates the next environment promotion PR after a
 prerelease (deployment-model: tbd-pr only). Set to false when using the
 tbd-promote reusable workflow separately.
+
+One open promotion PR per target environment: if an open promotion PR
+already exists for the next environment (any version), its title and
+body are refreshed to the latest tag instead of opening a duplicate.
+Reviewers should click "Update Branch" on the existing PR before
+merging so the cut reflects the latest commits on the target branch —
+the version in the PR title is metadata; the cut version is derived
+from the merged commit history.
 
 ### Authentication
 
@@ -211,6 +239,33 @@ token to bypass branch protection rules.
 - Default: `''`
 
 GitHub App private key (PEM). Required when app-id is set.
+
+#### `submodules`
+
+- Required: `false`
+- Default: `false`
+
+Pass-through to actions/checkout's `submodules` input on
+release-runner's internal checkout step.
+
+When set non-false in `auth-mode: private-app` or `auth-mode:
+auto` with App credentials, the App installation token is also
+broadened from the current-repo scope to the owner scope so
+submodules from sibling repositories in the same org can be
+fetched. The App must be installed on the submodule's repo for
+that broadened scope to actually grant access.
+
+For `auth-mode: github-token` / `public-app`, the configured
+token must have read access to the submodule repository — the
+action does not generate a separate token in those modes.
+
+One of:
+
+| Value | Description |
+|---|---|
+| `false` | (default) Skip submodules. |
+| `true` | Fetch submodules at the recorded SHA, one level deep. |
+| `recursive` | Fetch submodules and nested submodules. |
 
 #### `token-broker-url`
 
@@ -259,6 +314,42 @@ Groups are expanded — all sub-targets are built/promoted automatically.
 - Default: `ghcr.io`
 
 Container registry
+
+#### `registry-username`
+
+- Required: `false`
+- Default: `''`
+
+Username for `docker login` against `registry`. Defaults to
+`github.actor` when blank, which is what GHCR on github.com expects.
+
+Override when targeting a registry that requires fixed credentials —
+e.g. GitHub Enterprise Server's container registry
+(`containers.<ghes-host>`), Harbor, JFrog Artifactory, Nexus, Azure
+Container Registry. Pass a workflow secret, typically
+`secrets.REGISTRY_USERNAME`.
+
+When set, you should also set `registry-password`. The pair is used
+verbatim for both CI image pushes (`pr-<N>` tags) and release image
+promotion.
+
+#### `registry-password`
+
+- Required: `false`
+- Default: `''`
+
+Password / token for `docker login` against `registry`. Defaults to
+the workflow's `GITHUB_TOKEN` (the `github-token` input, or
+`github.token` when that is blank), which is what GHCR on github.com
+expects. This is independent of the token used for git operations —
+git ops use the GitHub App installation token under `auth-mode:
+private-app` or `public-app`, but registry login always falls back
+to the workflow token.
+
+Override when targeting a registry that requires fixed credentials.
+Pass a workflow secret, typically `secrets.REGISTRY_PASSWORD`. When
+set, you should also set `registry-username`. The pair is used
+verbatim for both CI image pushes and release image promotion.
 
 #### `platforms`
 

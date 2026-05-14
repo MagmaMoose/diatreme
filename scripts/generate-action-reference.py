@@ -30,6 +30,7 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "changelog",
     "working-directory",
     "force-bump",
+    "version-override",
   ]),
   ("Deployment model", [
     "deployment-model",
@@ -43,6 +44,7 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "github-token",
     "app-id",
     "app-private-key",
+    "submodules",
     "token-broker-url",
     "oidc-audience",
   ]),
@@ -51,6 +53,8 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
     "bake_file",
     "bake_target",
     "registry",
+    "registry-username",
+    "registry-password",
     "platforms",
   ]),
   ("CI checks", [

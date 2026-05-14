@@ -6,3 +6,11 @@ __pycache__/
 dist/
 node_modules/
 worker/.wrangler/
+
+# Syncthing leaves these when two devices edit the same file.
+# They must never be staged — the content is older than whatever
+# is already on disk.
+*.sync-conflict-*
+
+# Claude Code session state
+.claude/

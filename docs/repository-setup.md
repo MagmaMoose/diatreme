@@ -45,6 +45,72 @@ target "default" {
 
 For multiple images, make `default` a Bake group and give each target its own tag.
 
+### Authenticate to a non-GHCR registry
+
+The action's defaults — `registry: ghcr.io`, login as `github.actor` with the
+workflow's auth token — work for GHCR on github.com. For any other registry,
+set `registry`, `registry-username`, and `registry-password` to credentials
+the registry actually accepts.
+
+This is the right path for:
+
+- GitHub Enterprise Server's container registry (`containers.<ghes-host>`)
+- Harbor, JFrog Artifactory, Nexus
+- Azure Container Registry, AWS ECR (with an access token), GCP Artifact Registry
+- Any internal registry behind basic auth
+
+Add these inputs to **both** your CI workflow (Section 3) and your release
+workflow (Section 4), and store the credentials as repo or org secrets:
+
+```yaml
+- uses: calebsargeant/semantic-release@v1
+  with:
+    mode: release   # or ci
+    image_name: my-app
+    registry: containers.ghes.example.com
+    registry-username: ${{ secrets.REGISTRY_USERNAME }}
+    registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+```
+
+Make sure the `${REGISTRY}` default in your `docker-bake.hcl` matches the
+registry you log in to, otherwise the push will succeed-then-fail with a
+hostname mismatch:
+
+```hcl
+variable "REGISTRY" { default = "containers.ghes.example.com" }
+```
+
+Leave `registry-username` and `registry-password` blank to keep the GHCR
+defaults.
+
+### Fetch git submodules
+
+Release Runner runs its own `actions/checkout` internally before any
+build step, so adding `actions/checkout` with `submodules: recursive`
+in the caller workflow doesn't help — release-runner's checkout
+overwrites it. Use the `submodules` input instead:
+
+```yaml
+- uses: calebsargeant/semantic-release@v1
+  with:
+    mode: release   # or ci
+    image_name: my-app
+    submodules: recursive
+    auth-mode: private-app
+    app-id: '12345'
+    app-private-key: ${{ secrets.RELEASE_RUNNER_APP_PRIVATE_KEY }}
+```
+
+When `submodules` is non-`false` under `auth-mode: private-app` or
+`auto`, the App installation token is broadened from current-repo
+scope to owner scope, so submodules from sibling repos in the same
+org are fetchable in one call. The App must be installed on the
+submodule repo for that to actually grant access.
+
+For `auth-mode: github-token` / `public-app`, supply a token (via
+`github-token`) that has read access to the submodule repo. The action
+doesn't issue a separate one in those modes.
+
 ## 3. Add CI For Docker Repositories
 
 Skip this section for version-only releases.

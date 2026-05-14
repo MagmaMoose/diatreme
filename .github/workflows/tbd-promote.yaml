@@ -61,10 +61,13 @@ jobs:
 
       - name: Determine next environment
         id: next-env
+        env:
+          INPUT_CURRENT_ENVIRONMENT: ${{ inputs.current-environment }}
+          INPUT_ENVIRONMENTS: ${{ inputs.environments }}
         run: |
           set -euo pipefail
-          ENV="${{ inputs.current-environment }}"
-          ENVS='${{ inputs.environments }}'
+          ENV="${INPUT_CURRENT_ENVIRONMENT}"
+          ENVS="${INPUT_ENVIRONMENTS}"
           LAST_ENV=$(echo "${ENVS}" | jq -r '.[-1]')
 
           if [ "${ENV}" == "${LAST_ENV}" ]; then
@@ -82,14 +85,18 @@ jobs:
         if: steps.next-env.outputs.next_env != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_ENV: ${{ steps.next-env.outputs.next_env }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PREFIX: ${{ inputs.prefix }}
+          INPUT_TARGET_BRANCH: ${{ inputs.target-branch }}
         run: |
           set -euo pipefail
 
-          NEXT_ENV="${{ steps.next-env.outputs.next_env }}"
-          VERSION="${{ inputs.version }}"
-          TAG="${{ inputs.tag }}"
-          PREFIX="${{ inputs.prefix }}"
-          TARGET="${{ inputs.target-branch }}"
+          VERSION="${INPUT_VERSION}"
+          TAG="${INPUT_TAG}"
+          PREFIX="${INPUT_PREFIX}"
+          TARGET="${INPUT_TARGET_BRANCH}"
           BRANCH="${PREFIX}/${NEXT_ENV}/${VERSION}"
 
           git config user.name  "github-actions[bot]"

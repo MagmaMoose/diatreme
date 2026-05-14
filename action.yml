@@ -80,6 +80,12 @@ inputs:
       Exact matches always win over globs. When two globs both match, the
       one with the longer key wins, so a specific pattern like
       `release/hotfix/*` beats `release/*`.
+
+      `master` and `main` are interchangeable for exact-match lookup —
+      a branch-map entry for `"main"` will match a `master`-default repo
+      and vice versa, so the same map works across repos that haven't
+      finished renaming. An explicit entry for either always wins over
+      the implicit alias.
     required: false
     default: ''
 
@@ -100,6 +106,14 @@ inputs:
       When true, automatically creates the next environment promotion PR after a
       prerelease (deployment-model: tbd-pr only). Set to false when using the
       tbd-promote reusable workflow separately.
+
+      One open promotion PR per target environment: if an open promotion PR
+      already exists for the next environment (any version), its title and
+      body are refreshed to the latest tag instead of opening a duplicate.
+      Reviewers should click "Update Branch" on the existing PR before
+      merging so the cut reflects the latest commits on the target branch —
+      the version in the PR title is metadata; the cut version is derived
+      from the merged commit history.
     required: false
     default: 'false'
 
@@ -153,6 +167,29 @@ inputs:
     required: false
     default: ''
 
+  submodules:
+    description: |
+      Pass-through to actions/checkout's `submodules` input on
+      release-runner's internal checkout step.
+
+      When set non-false in `auth-mode: private-app` or `auth-mode:
+      auto` with App credentials, the App installation token is also
+      broadened from the current-repo scope to the owner scope so
+      submodules from sibling repositories in the same org can be
+      fetched. The App must be installed on the submodule's repo for
+      that broadened scope to actually grant access.
+
+      For `auth-mode: github-token` / `public-app`, the configured
+      token must have read access to the submodule repository — the
+      action does not generate a separate token in those modes.
+
+      One of:
+        false      (default) Skip submodules.
+        true       Fetch submodules at the recorded SHA, one level deep.
+        recursive  Fetch submodules and nested submodules.
+    required: false
+    default: 'false'
+
   # ── Docker ────────────────────────────────────────────────────────────────
   image_name:
     description: |
@@ -178,6 +215,40 @@ inputs:
     description: 'Container registry'
     required: false
     default: 'ghcr.io'
+
+  registry-username:
+    description: |
+      Username for `docker login` against `registry`. Defaults to
+      `github.actor` when blank, which is what GHCR on github.com expects.
+
+      Override when targeting a registry that requires fixed credentials —
+      e.g. GitHub Enterprise Server's container registry
+      (`containers.<ghes-host>`), Harbor, JFrog Artifactory, Nexus, Azure
+      Container Registry. Pass a workflow secret, typically
+      `secrets.REGISTRY_USERNAME`.
+
+      When set, you should also set `registry-password`. The pair is used
+      verbatim for both CI image pushes (`pr-<N>` tags) and release image
+      promotion.
+    required: false
+    default: ''
+
+  registry-password:
+    description: |
+      Password / token for `docker login` against `registry`. Defaults to
+      the workflow's `GITHUB_TOKEN` (the `github-token` input, or
+      `github.token` when that is blank), which is what GHCR on github.com
+      expects. This is independent of the token used for git operations —
+      git ops use the GitHub App installation token under `auth-mode:
+      private-app` or `public-app`, but registry login always falls back
+      to the workflow token.
+
+      Override when targeting a registry that requires fixed credentials.
+      Pass a workflow secret, typically `secrets.REGISTRY_PASSWORD`. When
+      set, you should also set `registry-username`. The pair is used
+      verbatim for both CI image pushes and release image promotion.
+    required: false
+    default: ''
 
   platforms:
     description: 'Target platforms (comma-separated) for CI builds and fallback fresh builds.'
@@ -349,12 +420,26 @@ inputs:
 
       Honoured by:
         - semantic-release-python: passed as the upstream `force` input.
-        - gitversion: passed as `/overrideconfig increment=Major|Minor|Patch`.
+        - gitversion: passed to gittools/actions@v4 as
+          `overrideConfig: increment=Major|Minor|Patch`.
 
       Ignored by semantic-release-npm and release-please — those tools
       have no clean equivalent and a forced bump would conflict with the
       tool's own logic. Wire your `workflow_dispatch` `bump` input to
       this input from the caller workflow.
+    required: false
+    default: ''
+
+  version-override:
+    description: |
+      Explicit version to release/build. Accepts SemVer with optional `v`
+      prefix, e.g. `3.20.0` or `v3.20.0-rc.1`.
+
+      When set, release-runner skips automatic version calculation and uses
+      this value for release tag/image versioning. The optional `v` prefix is
+      stripped only for `${VERSION}` substitution in bake/build args.
+
+      Mutually exclusive with `force-bump`.
     required: false
     default: ''
 
@@ -468,6 +553,17 @@ runs:
   using: composite
   steps:
 
+    # ── 0. Resolve GH_HOST for the gh CLI ───────────────────────────────────
+    # Every subsequent `gh release`, `gh api`, etc. call in this action
+    # talks to the GitHub host this workflow is running on. The CLI
+    # otherwise defaults to github.com, which silently misroutes API
+    # calls (or 404s) when the action runs on a GHE Server instance.
+    # Persist GH_HOST to $GITHUB_ENV so every later step inherits it.
+    - name: Resolve GH_HOST for the gh CLI
+      shell: bash
+      run: |
+        echo "GH_HOST=${GITHUB_SERVER_URL#https://}" >> "$GITHUB_ENV"
+
     # ── 1. Optional GitHub App token ────────────────────────────────────────
     - name: Generate private GitHub App token
       id: app-token
@@ -482,6 +578,11 @@ runs:
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
+        # When the caller requests submodule checkout, broaden the
+        # installation token's scope from the current repo to all repos
+        # in the owner that the App is installed on. Empty string =
+        # default current-repo scope.
+        owner: ${{ inputs.submodules != 'false' && github.repository_owner || '' }}
 
     - name: Request public GitHub App token
       id: public-app-token
@@ -510,6 +611,7 @@ runs:
         fetch-depth: 0
         fetch-tags: true
         token: ${{ steps.auth.outputs.token }}
+        submodules: ${{ inputs.submodules }}
 
     # ═════════════════════════════════════════════════════════════════════════
     # CI MODE — build and push pr-<N> image
@@ -522,6 +624,39 @@ runs:
         PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-branch-naming.sh"
 
+    - name: Validate version override
+      id: version-override
+      if: (inputs.mode == 'ci' || inputs.mode == 'release') && inputs.version-override != ''
+      shell: bash
+      env:
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        set -euo pipefail
+        RAW="${INPUT_VERSION_OVERRIDE}"
+
+        if [ -n "${INPUT_FORCE_BUMP}" ]; then
+          echo "::error::version-override and force-bump are mutually exclusive; set only one."
+          exit 1
+        fi
+
+        # Reject build metadata (`+...`). Strict SemVer allows it, but the
+        # resolved version is also used as a Docker tag downstream
+        # (`NEW_TAG="${IMAGE}:${TAG}"`) and Docker tags forbid `+`. Failing
+        # at validation gives the caller a clear error instead of an opaque
+        # registry-side failure after the tag is already cut.
+        if ! [[ "${RAW}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+          echo "::error::version-override '${RAW}' is not a Docker-compatible SemVer. Expected examples: 3.20.0, 3.20.0-rc.1, v3.20.0. Build metadata (e.g. '1.2.3+meta') is rejected because Docker tags forbid '+'."
+          exit 1
+        fi
+
+        VERSION="${RAW#v}"
+        TAG="${INPUT_TAG_PREFIX}${VERSION}"
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+
     - name: Set up QEMU
       if: inputs.mode == 'ci' && inputs.image_name != ''
       uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -530,47 +665,52 @@ runs:
       if: inputs.mode == 'ci' && inputs.image_name != ''
       uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-    - name: Log in to GHCR (CI)
+    - name: Log in to container registry (CI)
       if: inputs.mode == 'ci' && inputs.image_name != ''
       uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
       with:
         registry: ${{ inputs.registry }}
-        username: ${{ github.actor }}
-        password: ${{ steps.auth.outputs.registry-token }}
+        username: ${{ inputs.registry-username || github.actor }}
+        password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
 
     - name: Build and push pr-<N>
       if: inputs.mode == 'ci' && inputs.image_name != ''
       shell: bash
+      env:
+        VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
+        REGISTRY: ${{ inputs.registry }}
+        PLATFORMS: ${{ inputs.platforms }}
+        BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        OWNER: ${{ github.repository_owner }}
+        REF_NAME: ${{ github.ref_name }}
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_BAKE_FILE: ${{ inputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
       run: |
         set -euo pipefail
 
-        OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        export IMAGE_NAME="${OWNER_LOWER}/${{ inputs.image_name }}"
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
 
         echo "IMAGE_NAME: ${IMAGE_NAME}"
         echo "VERSION:    ${VERSION}"
 
         TARGETS=$(docker buildx bake \
-          -f "${{ inputs.bake_file }}" "${{ inputs.bake_target }}" \
+          -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" \
           --print 2>/dev/null | jq -r '.target | keys[]')
 
         CACHE_ARGS=()
         for TARGET in ${TARGETS}; do
-          SCOPE="bk-${TARGET}-${{ github.ref_name }}"
+          SCOPE="bk-${TARGET}-${REF_NAME}"
           CACHE_ARGS+=(--set "${TARGET}.cache-from=type=gha,scope=${SCOPE}")
           CACHE_ARGS+=(--set "${TARGET}.cache-to=type=gha,mode=max,scope=${SCOPE}")
         done
 
         docker buildx bake \
-          -f "${{ inputs.bake_file }}" \
-          "${{ inputs.bake_target }}" \
+          -f "${INPUT_BAKE_FILE}" \
+          "${INPUT_BAKE_TARGET}" \
           "${CACHE_ARGS[@]}" \
           --push
-      env:
-        VERSION: pr-${{ github.event.pull_request.number }}
-        REGISTRY: ${{ inputs.registry }}
-        PLATFORMS: ${{ inputs.platforms }}
-        BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
 
     # ═════════════════════════════════════════════════════════════════════════
     # RELEASE MODE — versioning
@@ -580,14 +720,21 @@ runs:
       id: detect-env
       if: inputs.mode == 'release'
       shell: bash
+      env:
+        INPUT_DEPLOYMENT_MODEL: ${{ inputs.deployment-model }}
+        INPUT_BRANCH_MAP: ${{ inputs.branch-map }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
+        INPUT_PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: |
         set -euo pipefail
 
-        DEPLOY_MODEL="${{ inputs.deployment-model }}"
-        BRANCH_MAP='${{ inputs.branch-map }}'
-        ENV="${{ inputs.environment }}"
-        ENVS='${{ inputs.environments }}'
-        IDS='${{ inputs.prerelease-identifiers }}'
+        DEPLOY_MODEL="${INPUT_DEPLOYMENT_MODEL}"
+        BRANCH_MAP="${INPUT_BRANCH_MAP}"
+        ENV="${INPUT_ENVIRONMENT}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        IDS="${INPUT_PRERELEASE_IDENTIFIERS}"
 
         echo "Deployment model: ${DEPLOY_MODEL}"
         echo "Environments:     ${ENVS}"
@@ -600,8 +747,20 @@ runs:
           fi
           BRANCH="${GITHUB_REF_NAME}"
 
-          # 1) Try exact match first — fastest and unambiguous.
-          DETECTED_ENV=$(echo "${BRANCH_MAP}" | jq -r --arg b "${BRANCH}" '.[$b] // empty')
+          # 1) Try exact match first — fastest and unambiguous. `master`
+          # and `main` alias each other so a single branch-map works for
+          # repos that have and haven't been renamed off `master`. The
+          # alias is guarded by `has($b)`: an explicit entry for either
+          # name (even one set to null) suppresses the alias and behaves
+          # like the historical `.[$b] // empty` lookup. The alias only
+          # kicks in when the branch key is absent from the map.
+          DETECTED_ENV=$(echo "${BRANCH_MAP}" | jq -r --arg b "${BRANCH}" '
+            if has($b) then (.[$b] // empty)
+            else (if   $b == "main"   then (.["master"] // empty)
+                  elif $b == "master" then (.["main"]   // empty)
+                  else empty end)
+            end
+          ')
 
           # 2) Fall back to glob patterns. Keys containing `*` are treated as
           # globs (translated to anchored regex with dots escaped). This
@@ -631,7 +790,7 @@ runs:
         fi
 
         if [ "${DEPLOY_MODEL}" == "tbd-pr" ]; then
-          BRANCH_PREFIX="${{ inputs.promote-branch-prefix }}"
+          BRANCH_PREFIX="${INPUT_PROMOTE_BRANCH_PREFIX}"
           HEAD_REF="${GITHUB_HEAD_REF}"
           if [ -n "${HEAD_REF}" ] && echo "${HEAD_REF}" | grep -qE "^${BRANCH_PREFIX}/[^/]+/"; then
             DETECTED_ENV=$(echo "${HEAD_REF}" | cut -d'/' -f2)
@@ -745,7 +904,7 @@ runs:
 
     - name: Run python-semantic-release
       id: psr
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-python'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-python'
       uses: python-semantic-release/python-semantic-release@v10
       with:
         github_token: ${{ steps.auth.outputs.token }}
@@ -769,14 +928,14 @@ runs:
         directory: ${{ inputs.working-directory }}
 
     - name: Set up Node.js (semantic-release-npm)
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       uses: actions/setup-node@v6
       with:
         node-version: '20'
 
     - name: Run semantic-release (npm)
       id: semrel-npm
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'semantic-release-npm'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -785,12 +944,16 @@ runs:
         GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
         GIT_COMMITTER_NAME: github-actions[bot]
         GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_PROMOTE_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: |
         set -euo pipefail
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        PREFIX="${{ inputs.tag-prefix }}"
-        PROMOTE_PREFIX="${{ inputs.promote-branch-prefix }}"
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        IDENTIFIER="${DETECT_IDENTIFIER}"
+        PREFIX="${INPUT_TAG_PREFIX}"
+        PROMOTE_PREFIX="${INPUT_PROMOTE_PREFIX}"
         HEAD_REF="${GITHUB_HEAD_REF:-}"
 
         if ! npx --no semantic-release --version &>/dev/null; then
@@ -946,42 +1109,47 @@ runs:
         fi
 
     - name: Install GitVersion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/setup@v4
       with:
         versionSpec: ${{ inputs.gitversion-spec }}
 
     - name: Execute GitVersion
       id: gitversion
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       uses: gittools/actions/gitversion/execute@v4
       with:
-        useConfigFile: true
         configFilePath: ${{ inputs.gitversion-config }}
         # GitVersion accepts /overrideconfig flags; map force-bump onto its
         # `increment` knob. Empty force-bump leaves GitVersion's branch
-        # rules in charge.
-        additionalArguments: |
+        # rules in charge. gittools/actions@v4 takes one key=value per
+        # line via overrideConfig (replaces the v0 additionalArguments
+        # /overrideconfig invocation that v4 no longer recognises).
+        overrideConfig: |
           ${{
-            inputs.force-bump == 'major' && '/overrideconfig increment=Major' ||
-            inputs.force-bump == 'minor' && '/overrideconfig increment=Minor' ||
-            inputs.force-bump == 'patch' && '/overrideconfig increment=Patch' ||
+            inputs.force-bump == 'major' && 'increment=Major' ||
+            inputs.force-bump == 'minor' && 'increment=Minor' ||
+            inputs.force-bump == 'patch' && 'increment=Patch' ||
             ''
           }}
 
     - name: Create GitVersion release tag
       id: gitversion-tag
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'gitversion'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'gitversion'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        GITVERSION_MAJOR_MINOR_PATCH: ${{ steps.gitversion.outputs.majorMinorPatch }}
       run: |
         set -euo pipefail
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        PREFIX="${{ inputs.tag-prefix }}"
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        IDENTIFIER="${DETECT_IDENTIFIER}"
+        PREFIX="${INPUT_TAG_PREFIX}"
         if [ "${IS_PRERELEASE}" == "true" ]; then
-          BASE="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          BASE="${GITVERSION_MAJOR_MINOR_PATCH}"
           LATEST=$(git tag -l "${PREFIX}${BASE}-${IDENTIFIER}.*" | sort -V | tail -1)
           if [ -z "${LATEST}" ]; then
             PRE_NUM=1
@@ -991,57 +1159,47 @@ runs:
           fi
           VERSION="${BASE}-${IDENTIFIER}.${PRE_NUM}"
         else
-          VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          VERSION="${GITVERSION_MAJOR_MINOR_PATCH}"
         fi
         TAG="${PREFIX}${VERSION}"
         echo "Creating tag: ${TAG}"
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        REMOTE_URL=$(git remote get-url origin)
-        AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
-
-        # Concurrency safety: a parallel run on the same branch may have
-        # raced us and already created this tag. Check the remote first;
-        # if the tag exists, treat it as "released" (the parallel run
-        # owns it) and skip re-publishing — otherwise tag and push,
-        # detecting the same race in the push-failure branch as a
-        # belt-and-suspenders.
-        if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-          echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-          echo "released=false"     >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        git tag -a "${TAG}" -m "chore(release): ${TAG}"
-
-        if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
-          # Re-check the remote — if the tag now exists, another run beat
-          # us between the ls-remote and the push. That's a clean race
-          # outcome: continue gracefully without failing the workflow.
-          if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-            echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race). Skipping downstream steps."
-            git tag -d "${TAG}" 2>/dev/null || true
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-            echo "released=false"     >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
-          exit 1
-        fi
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
         # GitHub Release is published in a later step, after image
         # promotion, so downstream `release:published` listeners see
         # versioned images in the registry.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
+
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
+
+    - name: Create version-override release tag
+      id: version-override-tag
+      if: inputs.mode == 'release' && inputs.version-override != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        OVERRIDE_VERSION: ${{ steps.version-override.outputs.version }}
+        OVERRIDE_TAG: ${{ steps.version-override.outputs.tag }}
+      run: |
+        set -euo pipefail
+        VERSION="${OVERRIDE_VERSION}"
+        TAG="${OVERRIDE_TAG}"
+        echo "Creating tag: ${TAG}"
+
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
 
     - name: Run release-please
       id: release-please
-      if: inputs.mode == 'release' && inputs.versioning-tool == 'release-please'
+      if: inputs.mode == 'release' && inputs.version-override == '' && inputs.versioning-tool == 'release-please'
       uses: googleapis/release-please-action@v5
       with:
         token: ${{ steps.auth.outputs.token }}
@@ -1052,49 +1210,73 @@ runs:
       id: normalize
       if: inputs.mode == 'release'
       shell: bash
+      env:
+        INPUT_TOOL: ${{ inputs.versioning-tool }}
+        INPUT_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        OVERRIDE_TAG_VERSION: ${{ steps.version-override-tag.outputs.version }}
+        OVERRIDE_TAG_TAG: ${{ steps.version-override-tag.outputs.tag }}
+        OVERRIDE_TAG_RELEASED: ${{ steps.version-override-tag.outputs.released }}
+        PSR_VERSION: ${{ steps.psr.outputs.version }}
+        PSR_RELEASED: ${{ steps.psr.outputs.released }}
+        PSR_TAG: ${{ steps.psr.outputs.tag }}
+        SEMREL_NPM_LATEST_TAG: ${{ steps.semrel-npm.outputs.latest_tag }}
+        SEMREL_NPM_RELEASED: ${{ steps.semrel-npm.outputs.released }}
+        SEMREL_NPM_RELEASE_NOTES: ${{ steps.semrel-npm.outputs.release_notes }}
+        GITVERSION_TAG_VERSION: ${{ steps.gitversion-tag.outputs.version }}
+        GITVERSION_TAG_TAG: ${{ steps.gitversion-tag.outputs.tag }}
+        GITVERSION_TAG_RELEASED: ${{ steps.gitversion-tag.outputs.released }}
+        RELEASE_PLEASE_CREATED: ${{ steps.release-please.outputs.release_created }}
+        RELEASE_PLEASE_TAG_NAME: ${{ steps.release-please.outputs.tag_name }}
       run: |
         set -euo pipefail
-        TOOL="${{ inputs.versioning-tool }}"
-        PREFIX="${{ inputs.tag-prefix }}"
+        TOOL="${INPUT_TOOL}"
+        PREFIX="${INPUT_PREFIX}"
         VERSION=""
         RELEASED="false"
         TAG=""
         RELEASE_NOTES=""
-        case "${TOOL}" in
-          semantic-release-python)
-            VERSION="${{ steps.psr.outputs.version }}"
-            RELEASED="${{ steps.psr.outputs.released }}"
-            TAG="${{ steps.psr.outputs.tag }}"
-            ;;
-          semantic-release-npm)
-            LATEST_TAG="${{ steps.semrel-npm.outputs.latest_tag }}"
-            RELEASED="${{ steps.semrel-npm.outputs.released }}"
-            if [ -n "${LATEST_TAG}" ]; then
-              VERSION="${LATEST_TAG#${PREFIX}}"
-              TAG="${LATEST_TAG}"
-            fi
-            # Only the prerelease branch emits release_notes; stable
-            # and promotion-PR paths fall through to --generate-notes.
-            RELEASE_NOTES="${{ steps.semrel-npm.outputs.release_notes }}"
-            ;;
-          gitversion)
-            VERSION="${{ steps.gitversion-tag.outputs.version }}"
-            TAG="${{ steps.gitversion-tag.outputs.tag }}"
-            # The gitversion-tag step emits released=false when it
-            # detects a parallel run beat us to publishing the same tag.
-            # Default to true for the no-conflict case so existing
-            # callers see no behaviour change.
-            RELEASED="${{ steps.gitversion-tag.outputs.released }}"
-            [ -z "${RELEASED}" ] && RELEASED="true"
-            ;;
-          release-please)
-            if [ "${{ steps.release-please.outputs.release_created }}" == "true" ]; then
-              TAG="${{ steps.release-please.outputs.tag_name }}"
-              VERSION="${TAG#${PREFIX}}"
-              RELEASED="true"
-            fi
-            ;;
-        esac
+        if [ -n "${INPUT_VERSION_OVERRIDE}" ]; then
+          VERSION="${OVERRIDE_TAG_VERSION}"
+          TAG="${OVERRIDE_TAG_TAG}"
+          RELEASED="${OVERRIDE_TAG_RELEASED}"
+        else
+          case "${TOOL}" in
+            semantic-release-python)
+              VERSION="${PSR_VERSION}"
+              RELEASED="${PSR_RELEASED}"
+              TAG="${PSR_TAG}"
+              ;;
+            semantic-release-npm)
+              LATEST_TAG="${SEMREL_NPM_LATEST_TAG}"
+              RELEASED="${SEMREL_NPM_RELEASED}"
+              if [ -n "${LATEST_TAG}" ]; then
+                VERSION="${LATEST_TAG#${PREFIX}}"
+                TAG="${LATEST_TAG}"
+              fi
+              # Only the prerelease branch emits release_notes; stable
+              # and promotion-PR paths fall through to --generate-notes.
+              RELEASE_NOTES="${SEMREL_NPM_RELEASE_NOTES}"
+              ;;
+            gitversion)
+              VERSION="${GITVERSION_TAG_VERSION}"
+              TAG="${GITVERSION_TAG_TAG}"
+              # The gitversion-tag step emits released=false when it
+              # detects a parallel run beat us to publishing the same tag.
+              # Default to true for the no-conflict case so existing
+              # callers see no behaviour change.
+              RELEASED="${GITVERSION_TAG_RELEASED}"
+              [ -z "${RELEASED}" ] && RELEASED="true"
+              ;;
+            release-please)
+              if [ "${RELEASE_PLEASE_CREATED}" == "true" ]; then
+                TAG="${RELEASE_PLEASE_TAG_NAME}"
+                VERSION="${TAG#${PREFIX}}"
+                RELEASED="true"
+              fi
+              ;;
+          esac
+        fi
         if [ -z "${VERSION}" ]; then
           LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "${LATEST}" ]; then
@@ -1131,22 +1313,27 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        INPUT_VERSION_FILE: ${{ inputs.version-file }}
+        INPUT_VERSION_FILE_JSON_PATH: ${{ inputs.version-file-json-path }}
+        INPUT_GITVERSION_APPSETTINGS_FILE: ${{ inputs.gitversion-appsettings-file }}
+        INPUT_GITVERSION_APPSETTINGS_VERSION_PATH: ${{ inputs.gitversion-appsettings-version-path }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
       run: |
         set -euo pipefail
 
         # Prefer the new generic input. Fall back to the deprecated gitversion-prefixed
         # alias so existing callers keep working.
-        FILE="${{ inputs.version-file }}"
-        JSON_PATH="${{ inputs.version-file-json-path }}"
+        FILE="${INPUT_VERSION_FILE}"
+        JSON_PATH="${INPUT_VERSION_FILE_JSON_PATH}"
         if [ -z "${FILE}" ]; then
-          FILE="${{ inputs.gitversion-appsettings-file }}"
-          if [ -n "${{ inputs.gitversion-appsettings-version-path }}" ]; then
-            JSON_PATH="${{ inputs.gitversion-appsettings-version-path }}"
+          FILE="${INPUT_GITVERSION_APPSETTINGS_FILE}"
+          if [ -n "${INPUT_GITVERSION_APPSETTINGS_VERSION_PATH}" ]; then
+            JSON_PATH="${INPUT_GITVERSION_APPSETTINGS_VERSION_PATH}"
           fi
           echo "::notice::gitversion-appsettings-file is deprecated; use version-file."
         fi
 
-        VERSION="${{ steps.normalize.outputs.version }}"
+        VERSION="${NORMALIZE_VERSION}"
 
         if [ ! -f "${FILE}" ]; then
           echo "::warning::version-file '${FILE}' not found — skipping injection."
@@ -1239,13 +1426,13 @@ runs:
       if: inputs.mode == 'release' && inputs.image_name != '' && steps.normalize.outputs.released == 'true'
       uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-    - name: Log in to GHCR (release)
+    - name: Log in to container registry (release)
       if: inputs.mode == 'release' && inputs.image_name != '' && steps.normalize.outputs.released == 'true'
       uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
       with:
         registry: ${{ inputs.registry }}
-        username: ${{ github.actor }}
-        password: ${{ steps.auth.outputs.registry-token }}
+        username: ${{ inputs.registry-username || github.actor }}
+        password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
 
     - name: Promote images
       if: inputs.mode == 'release' && inputs.image_name != '' && steps.normalize.outputs.released == 'true'
@@ -1253,26 +1440,41 @@ runs:
       env:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        DETECT_ENV: ${{ steps.detect-env.outputs.environment }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        INPUT_DEPLOYMENT_MODEL: ${{ inputs.deployment-model }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        OWNER: ${{ github.repository_owner }}
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_BAKE_FILE: ${{ inputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+        REPO_FULL: ${{ github.repository }}
       run: |
         set -euo pipefail
 
-        VERSION="${{ steps.normalize.outputs.version }}"
-        TAG="${{ steps.normalize.outputs.tag }}"
-        ENV="${{ steps.detect-env.outputs.environment }}"
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        DEPLOY_MODEL="${{ inputs.deployment-model }}"
-        ENVS='${{ inputs.environments }}'
-        IDS='${{ inputs.prerelease-identifiers }}'
-        PREFIX="${{ inputs.tag-prefix }}"
+        VERSION="${NORMALIZE_VERSION}"
+        TAG="${NORMALIZE_TAG}"
+        ENV="${DETECT_ENV}"
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        DEPLOY_MODEL="${INPUT_DEPLOYMENT_MODEL}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        IDS="${INPUT_PRERELEASE_IDENTIFIERS}"
+        PREFIX="${INPUT_TAG_PREFIX}"
 
-        OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        export IMAGE_NAME="${OWNER_LOWER}/${{ inputs.image_name }}"
-        export REGISTRY="${{ inputs.registry }}"
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+        export REGISTRY="${INPUT_REGISTRY}"
         export VERSION="${VERSION}"
-        export PLATFORMS="${{ inputs.platforms }}"
+        export PLATFORMS="${INPUT_PLATFORMS}"
 
         # Discover all bake targets
-        BAKE_OUTPUT=$(docker buildx bake -f "${{ inputs.bake_file }}" "${{ inputs.bake_target }}" --print 2>/dev/null)
+        BAKE_OUTPUT=$(docker buildx bake -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" --print 2>/dev/null)
         IMAGES=$(echo "${BAKE_OUTPUT}" | jq -c '.target | to_entries | map({target: .key, image: (.value.tags[0] // "" | split(":")[0])})')
         echo "Images to promote: ${IMAGES}"
 
@@ -1299,30 +1501,30 @@ runs:
         SOURCE_TAG_SUFFIX=""
         if [ "${IS_FIRST_ENV}" == "true" ]; then
           # Find the PR associated with this release tag via GitHub API
-          COMMIT_SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" \
+          COMMIT_SHA=$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" \
             --jq 'if .object.type == "tag" then .object.sha else .object.sha end' 2>/dev/null || echo "")
 
           if [ -n "${COMMIT_SHA}" ]; then
             # Resolve annotated tag to commit
-            TAG_TYPE=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" --jq '.object.type' 2>/dev/null || echo "commit")
+            TAG_TYPE=$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --jq '.object.type' 2>/dev/null || echo "commit")
             if [ "${TAG_TYPE}" == "tag" ]; then
-              COMMIT_SHA=$(gh api "repos/${{ github.repository }}/git/tags/${COMMIT_SHA}" --jq '.object.sha' 2>/dev/null || echo "${COMMIT_SHA}")
+              COMMIT_SHA=$(gh api "repos/${REPO_FULL}/git/tags/${COMMIT_SHA}" --jq '.object.sha' 2>/dev/null || echo "${COMMIT_SHA}")
             fi
 
             PR_NUMBER=""
             CURRENT_SHA="${COMMIT_SHA}"
             for _ in 1 2 3 4 5; do
-              PR_NUMBER=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}/pulls" \
+              PR_NUMBER=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}/pulls" \
                 --jq '[.[] | select(.merged_at != null)] | .[0].number // empty' 2>/dev/null || echo "")
               [ -n "${PR_NUMBER}" ] && break
               # Check commit message for PR reference
-              MSG_PR=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}" \
+              MSG_PR=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}" \
                 --jq '.commit.message' 2>/dev/null | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
               if [ -n "${MSG_PR}" ]; then
                 PR_NUMBER="${MSG_PR}"
                 break
               fi
-              CURRENT_SHA=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}" \
+              CURRENT_SHA=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}" \
                 --jq '.parents[0].sha // empty' 2>/dev/null || echo "")
               [ -z "${CURRENT_SHA}" ] && break
             done
@@ -1338,7 +1540,7 @@ runs:
           # Find latest tag with the previous environment's identifier
           BASE_VERSION=$(echo "${VERSION}" | sed 's/-[a-zA-Z][^.]*\.[0-9]*$//')
           SEARCH_PREFIX="${PREFIX}${BASE_VERSION}-${PREV_IDENTIFIER}."
-          SOURCE_TAG_SUFFIX=$(gh api "repos/${{ github.repository }}/git/matching-refs/tags/${SEARCH_PREFIX}" \
+          SOURCE_TAG_SUFFIX=$(gh api "repos/${REPO_FULL}/git/matching-refs/tags/${SEARCH_PREFIX}" \
             --jq '[.[].ref | ltrimstr("refs/tags/")] | sort_by(ltrimstr("'"${PREFIX}${BASE_VERSION}-${PREV_IDENTIFIER}."'") | tonumber) | last // empty' \
             2>/dev/null || echo "")
           if [ -n "${SOURCE_TAG_SUFFIX}" ]; then
@@ -1357,20 +1559,58 @@ runs:
           PROMOTED="false"
           if [ -n "${SOURCE_TAG_SUFFIX}" ]; then
             SOURCE="${IMAGE}:${SOURCE_TAG_SUFFIX}"
-            SOURCE_DIGEST=$(docker buildx imagetools inspect "${SOURCE}" \
-              --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || echo "")
 
-            if [ -n "${SOURCE_DIGEST}" ]; then
+            # Primary retag: `docker buildx imagetools create`. Preserves
+            # multi-arch manifest lists — a `docker pull` on a fat manifest
+            # would resolve to the runner's platform only and silently drop
+            # the other architectures. Works on every registry that
+            # implements the OCI referrers spec (ghcr.io, Docker Hub, ACR,
+            # Harbor, Artifactory, Nexus, etc.).
+            RETAG_OK=true
+            RETAG_METHOD="imagetools"
+            RETAG_ERR=$(mktemp)
+            if [ "${IS_PRERELEASE}" == "false" ]; then
+              docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
+            else
+              docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
+            fi
+
+            # Fallback: when imagetools fails specifically with the GHE
+            # Packages referrers-index parse error (the registry returns
+            # an HTML 404 page where buildx expects JSON), retry via the
+            # plain Distribution V2 pull/tag/push flow. This loses
+            # multi-arch manifest lists, so we log it loudly and only
+            # take this path when the referrers signature is matched —
+            # not for generic retag failures.
+            if [ "${RETAG_OK}" != "true" ] && grep -q "failed to decode referrers index" "${RETAG_ERR}"; then
+              echo "::warning::imagetools retag failed on a referrers-index parse (likely GHE Packages). Falling back to docker pull/tag/push — multi-arch manifest lists will collapse to the runner's platform on this retag."
+              RETAG_OK=true
+              RETAG_METHOD="pull-tag-push"
+              docker pull "${SOURCE}" || RETAG_OK=false
+              if [ "${RETAG_OK}" == "true" ]; then
+                docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+                docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ]; then
+                docker push "${NEW_TAG}" || RETAG_OK=false
+              fi
+              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+                docker push "${IMAGE}:latest" || RETAG_OK=false
+              fi
+            fi
+            rm -f "${RETAG_ERR}"
+
+            if [ "${RETAG_OK}" == "true" ]; then
               if [ "${IS_PRERELEASE}" == "false" ]; then
-                docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}"
-                echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest"
+                echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest via ${RETAG_METHOD}"
               else
-                docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}"
-                echo "Promoted ${SOURCE} → ${NEW_TAG}"
+                echo "Promoted ${SOURCE} → ${NEW_TAG} via ${RETAG_METHOD}"
               fi
               PROMOTED="true"
             else
-              echo "Source not found: ${SOURCE}"
+              echo "::warning::retag of ${SOURCE} → ${NEW_TAG} failed (last method: ${RETAG_METHOD}); falling back to fresh build."
             fi
           fi
 
@@ -1379,7 +1619,7 @@ runs:
             EXTRA_TAGS=""
             [ "${IS_PRERELEASE}" == "false" ] && EXTRA_TAGS="--set ${TARGET}.tags=${IMAGE}:latest"
             docker buildx bake \
-              -f "${{ inputs.bake_file }}" "${TARGET}" \
+              -f "${INPUT_BAKE_FILE}" "${TARGET}" \
               --set "${TARGET}.tags=${NEW_TAG}" \
               ${EXTRA_TAGS} \
               --set "${TARGET}.cache-from=type=gha,scope=buildkit-${TARGET}" \
@@ -1422,9 +1662,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        NORMALIZE_RELEASE_NOTES: ${{ steps.normalize.outputs.release_notes }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
       run: |
         set -euo pipefail
-        TAG="${{ steps.normalize.outputs.tag }}"
+        TAG="${NORMALIZE_TAG}"
         if [ -z "${TAG}" ]; then
           echo "::warning::No tag resolved by normalize step — skipping release publish."
           exit 0
@@ -1434,7 +1677,7 @@ runs:
           exit 0
         fi
         PRE_FLAG=""
-        if [ "${{ steps.detect-env.outputs.is_prerelease }}" == "true" ]; then
+        if [ "${DETECT_IS_PRERELEASE}" == "true" ]; then
           PRE_FLAG="--prerelease"
         fi
         # Preserve any per-path custom release notes the tagging step
@@ -1443,7 +1686,7 @@ runs:
         # paths that don't emit one fall back to GitHub's auto-generated
         # notes which include the PRs and contributors in the release
         # range. Using an array avoids word-splitting the notes string.
-        NOTES="${{ steps.normalize.outputs.release_notes }}"
+        NOTES="${NORMALIZE_RELEASE_NOTES}"
         NOTES_FLAGS=(--generate-notes)
         if [ -n "${NOTES}" ]; then
           NOTES_FLAGS=(--notes "${NOTES}")
@@ -1496,16 +1739,23 @@ runs:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
         OWNER: ${{ github.repository_owner }}
         REPO: ${{ github.event.repository.name }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        DETECT_ENV: ${{ steps.detect-env.outputs.environment }}
+        DETECT_PRERELEASE_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
+        INPUT_PROMOTE_TARGET_BRANCH: ${{ inputs.promote-target-branch }}
       run: |
         set -euo pipefail
 
-        VERSION="${{ steps.normalize.outputs.version }}"
-        TAG="${{ steps.normalize.outputs.tag }}"
-        ENV="${{ steps.detect-env.outputs.environment }}"
-        PRERELEASE_IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        ENVS='${{ inputs.environments }}'
-        PREFIX="${{ inputs.promote-branch-prefix }}"
-        TARGET="${{ inputs.promote-target-branch }}"
+        VERSION="${NORMALIZE_VERSION}"
+        TAG="${NORMALIZE_TAG}"
+        ENV="${DETECT_ENV}"
+        PRERELEASE_IDENTIFIER="${DETECT_PRERELEASE_IDENTIFIER}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        PREFIX="${INPUT_PROMOTE_BRANCH_PREFIX}"
+        TARGET="${INPUT_PROMOTE_TARGET_BRANCH}"
 
         LAST_ENV=$(echo "${ENVS}" | jq -r '.[-1]')
         if [ "${ENV}" == "${LAST_ENV}" ]; then
@@ -1515,8 +1765,64 @@ runs:
 
         ENV_INDEX=$(echo "${ENVS}" | jq -r --arg e "${ENV}" 'index($e)')
         NEXT_ENV=$(echo "${ENVS}" | jq -r --argjson i "${ENV_INDEX}" '.[$i + 1]')
-        BRANCH="${PREFIX}/${NEXT_ENV}/${VERSION}"
+        TITLE="chore(release): promote ${TAG} to ${NEXT_ENV}"
 
+        # Build a rich body so reviewers see the originating PR, the
+        # full PR list in the range, and the source/target environments
+        # without clicking through. Falls back to a one-line body if
+        # the script errors for any reason — never block PR creation.
+        render_body() {
+          local out="$1"
+          if env \
+              GH_TOKEN="${GH_TOKEN}" \
+              OWNER="${OWNER}" REPO="${REPO}" \
+              TAG="${TAG}" VERSION="${VERSION}" \
+              ENV="${ENV}" NEXT_ENV="${NEXT_ENV}" \
+              PRERELEASE_IDENTIFIER="${PRERELEASE_IDENTIFIER}" \
+              "${GITHUB_ACTION_PATH}/scripts/build-promotion-pr-body.sh" > "${out}" 2>/dev/null \
+              && [ -s "${out}" ]; then
+            echo "Using enriched PR body ($(wc -l < "${out}") lines)."
+          else
+            echo "::warning::Could not render enriched PR body — falling back to one-liner."
+            printf 'Merging this PR will trigger the **%s** release for `%s`.\n' \
+              "${NEXT_ENV}" "${TAG}" > "${out}"
+          fi
+        }
+
+        # One open promotion PR per target environment. If one is
+        # already open for NEXT_ENV (any version), refresh its title +
+        # body to the latest tag and exit — don't pile up duplicates.
+        # The version in the title is metadata; the cut version comes
+        # from semantic-release running on whatever commit lands on the
+        # target branch at merge time, so we tell the reviewer to click
+        # "Update Branch" before merging to bring the latest commits in.
+        EXISTING_NUM=$(gh pr list \
+          --state open --base "${TARGET}" \
+          --json number,headRefName \
+          --jq "first(.[] | select(.headRefName | startswith(\"${PREFIX}/${NEXT_ENV}/\")) | .number) // empty")
+
+        if [ -n "${EXISTING_NUM}" ]; then
+          echo "Refreshing existing promotion PR #${EXISTING_NUM} to ${TAG}"
+          BODY_FILE=$(mktemp)
+          render_body "${BODY_FILE}"
+          # Prepend a callout so reviewers know to click Update Branch.
+          TMP=$(mktemp)
+          {
+            printf '> **Latest available:** `%s`. Click **Update Branch** on this PR before merging so the cut reflects the latest commits on `%s`.\n\n' \
+              "${TAG}" "${TARGET}"
+            cat "${BODY_FILE}"
+          } > "${TMP}"
+          mv "${TMP}" "${BODY_FILE}"
+          gh pr edit "${EXISTING_NUM}" \
+            --title "${TITLE}" \
+            --body-file "${BODY_FILE}"
+          gh pr edit "${EXISTING_NUM}" --add-label "promotion" 2>/dev/null || true
+          echo "::notice::Promotion PR #${EXISTING_NUM} refreshed to ${TAG} — no new PR opened."
+          exit 0
+        fi
+
+        # No existing PR for this env — open a fresh one.
+        BRANCH="${PREFIX}/${NEXT_ENV}/${VERSION}"
         echo "Creating promotion PR: ${BRANCH} → ${TARGET}"
 
         git config user.name  "github-actions[bot]"
@@ -1527,34 +1833,17 @@ runs:
         printf 'Promote %s to %s.\n' "${TAG}" "${NEXT_ENV}" > ".github/promotions/${VERSION}-to-${NEXT_ENV}.md"
 
         git add ".github/promotions/${VERSION}-to-${NEXT_ENV}.md"
-        git commit -m "chore(release): promote ${TAG} to ${NEXT_ENV}"
+        git commit -m "${TITLE}"
 
         REMOTE_URL=$(git remote get-url origin)
         AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GH_TOKEN}@|")
         git push "${AUTHED_URL}" "${BRANCH}"
 
-        # Build a rich body so reviewers see the originating PR, the
-        # full PR list in the range, and the source/target environments
-        # without clicking through. Falls back to a one-line body if
-        # the script errors for any reason — never block PR creation.
         BODY_FILE=$(mktemp)
-        if env \
-            GH_TOKEN="${GH_TOKEN}" \
-            OWNER="${OWNER}" REPO="${REPO}" \
-            TAG="${TAG}" VERSION="${VERSION}" \
-            ENV="${ENV}" NEXT_ENV="${NEXT_ENV}" \
-            PRERELEASE_IDENTIFIER="${PRERELEASE_IDENTIFIER}" \
-            "${GITHUB_ACTION_PATH}/scripts/build-promotion-pr-body.sh" > "${BODY_FILE}" 2>/dev/null \
-            && [ -s "${BODY_FILE}" ]; then
-          echo "Using enriched PR body ($(wc -l < "${BODY_FILE}") lines)."
-        else
-          echo "::warning::Could not render enriched PR body — falling back to one-liner."
-          printf 'Merging this PR will trigger the **%s** release for `%s`.\n' \
-            "${NEXT_ENV}" "${TAG}" > "${BODY_FILE}"
-        fi
+        render_body "${BODY_FILE}"
 
         PR_URL=$(gh pr create \
-          --title "chore(release): promote ${TAG} to ${NEXT_ENV}" \
+          --title "${TITLE}" \
           --body-file "${BODY_FILE}" \
           --base "${TARGET}" \
           --head "${BRANCH}") || { echo "::warning::PR already exists for ${BRANCH}"; exit 0; }
