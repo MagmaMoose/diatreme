@@ -676,36 +676,41 @@ runs:
     - name: Build and push pr-<N>
       if: inputs.mode == 'ci' && inputs.image_name != ''
       shell: bash
-      run: |
-        set -euo pipefail
-
-        OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        export IMAGE_NAME="${OWNER_LOWER}/${{ inputs.image_name }}"
-
-        echo "IMAGE_NAME: ${IMAGE_NAME}"
-        echo "VERSION:    ${VERSION}"
-
-        TARGETS=$(docker buildx bake \
-          -f "${{ inputs.bake_file }}" "${{ inputs.bake_target }}" \
-          --print 2>/dev/null | jq -r '.target | keys[]')
-
-        CACHE_ARGS=()
-        for TARGET in ${TARGETS}; do
-          SCOPE="bk-${TARGET}-${{ github.ref_name }}"
-          CACHE_ARGS+=(--set "${TARGET}.cache-from=type=gha,scope=${SCOPE}")
-          CACHE_ARGS+=(--set "${TARGET}.cache-to=type=gha,mode=max,scope=${SCOPE}")
-        done
-
-        docker buildx bake \
-          -f "${{ inputs.bake_file }}" \
-          "${{ inputs.bake_target }}" \
-          "${CACHE_ARGS[@]}" \
-          --push
       env:
         VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
         REGISTRY: ${{ inputs.registry }}
         PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        OWNER: ${{ github.repository_owner }}
+        REF_NAME: ${{ github.ref_name }}
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_BAKE_FILE: ${{ inputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+      run: |
+        set -euo pipefail
+
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+
+        echo "IMAGE_NAME: ${IMAGE_NAME}"
+        echo "VERSION:    ${VERSION}"
+
+        TARGETS=$(docker buildx bake \
+          -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" \
+          --print 2>/dev/null | jq -r '.target | keys[]')
+
+        CACHE_ARGS=()
+        for TARGET in ${TARGETS}; do
+          SCOPE="bk-${TARGET}-${REF_NAME}"
+          CACHE_ARGS+=(--set "${TARGET}.cache-from=type=gha,scope=${SCOPE}")
+          CACHE_ARGS+=(--set "${TARGET}.cache-to=type=gha,mode=max,scope=${SCOPE}")
+        done
+
+        docker buildx bake \
+          -f "${INPUT_BAKE_FILE}" \
+          "${INPUT_BAKE_TARGET}" \
+          "${CACHE_ARGS[@]}" \
+          --push
 
     # ═════════════════════════════════════════════════════════════════════════
     # RELEASE MODE — versioning
@@ -715,14 +720,21 @@ runs:
       id: detect-env
       if: inputs.mode == 'release'
       shell: bash
+      env:
+        INPUT_DEPLOYMENT_MODEL: ${{ inputs.deployment-model }}
+        INPUT_BRANCH_MAP: ${{ inputs.branch-map }}
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
+        INPUT_PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: |
         set -euo pipefail
 
-        DEPLOY_MODEL="${{ inputs.deployment-model }}"
-        BRANCH_MAP='${{ inputs.branch-map }}'
-        ENV="${{ inputs.environment }}"
-        ENVS='${{ inputs.environments }}'
-        IDS='${{ inputs.prerelease-identifiers }}'
+        DEPLOY_MODEL="${INPUT_DEPLOYMENT_MODEL}"
+        BRANCH_MAP="${INPUT_BRANCH_MAP}"
+        ENV="${INPUT_ENVIRONMENT}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        IDS="${INPUT_PRERELEASE_IDENTIFIERS}"
 
         echo "Deployment model: ${DEPLOY_MODEL}"
         echo "Environments:     ${ENVS}"
@@ -778,7 +790,7 @@ runs:
         fi
 
         if [ "${DEPLOY_MODEL}" == "tbd-pr" ]; then
-          BRANCH_PREFIX="${{ inputs.promote-branch-prefix }}"
+          BRANCH_PREFIX="${INPUT_PROMOTE_BRANCH_PREFIX}"
           HEAD_REF="${GITHUB_HEAD_REF}"
           if [ -n "${HEAD_REF}" ] && echo "${HEAD_REF}" | grep -qE "^${BRANCH_PREFIX}/[^/]+/"; then
             DETECTED_ENV=$(echo "${HEAD_REF}" | cut -d'/' -f2)
@@ -932,12 +944,16 @@ runs:
         GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
         GIT_COMMITTER_NAME: github-actions[bot]
         GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_PROMOTE_PREFIX: ${{ inputs.promote-branch-prefix }}
       run: |
         set -euo pipefail
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        PREFIX="${{ inputs.tag-prefix }}"
-        PROMOTE_PREFIX="${{ inputs.promote-branch-prefix }}"
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        IDENTIFIER="${DETECT_IDENTIFIER}"
+        PREFIX="${INPUT_TAG_PREFIX}"
+        PROMOTE_PREFIX="${INPUT_PROMOTE_PREFIX}"
         HEAD_REF="${GITHUB_HEAD_REF:-}"
 
         if ! npx --no semantic-release --version &>/dev/null; then
@@ -1123,14 +1139,17 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
-        IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
-        IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
-        PREFIX: ${{ inputs.tag-prefix }}
-        BASE_VERSION: ${{ steps.gitversion.outputs.majorMinorPatch }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        GITVERSION_MAJOR_MINOR_PATCH: ${{ steps.gitversion.outputs.majorMinorPatch }}
       run: |
         set -euo pipefail
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        IDENTIFIER="${DETECT_IDENTIFIER}"
+        PREFIX="${INPUT_TAG_PREFIX}"
         if [ "${IS_PRERELEASE}" == "true" ]; then
-          BASE="${BASE_VERSION}"
+          BASE="${GITVERSION_MAJOR_MINOR_PATCH}"
           LATEST=$(git tag -l "${PREFIX}${BASE}-${IDENTIFIER}.*" | sort -V | tail -1)
           if [ -z "${LATEST}" ]; then
             PRE_NUM=1
@@ -1140,7 +1159,7 @@ runs:
           fi
           VERSION="${BASE}-${IDENTIFIER}.${PRE_NUM}"
         else
-          VERSION="${BASE_VERSION}"
+          VERSION="${GITVERSION_MAJOR_MINOR_PATCH}"
         fi
         TAG="${PREFIX}${VERSION}"
         echo "Creating tag: ${TAG}"
@@ -1294,11 +1313,11 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
-        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
         INPUT_VERSION_FILE: ${{ inputs.version-file }}
         INPUT_VERSION_FILE_JSON_PATH: ${{ inputs.version-file-json-path }}
         INPUT_GITVERSION_APPSETTINGS_FILE: ${{ inputs.gitversion-appsettings-file }}
         INPUT_GITVERSION_APPSETTINGS_VERSION_PATH: ${{ inputs.gitversion-appsettings-version-path }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
       run: |
         set -euo pipefail
 
@@ -1423,26 +1442,39 @@ runs:
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
         NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
         NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        DETECT_ENV: ${{ steps.detect-env.outputs.environment }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        INPUT_DEPLOYMENT_MODEL: ${{ inputs.deployment-model }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
+        INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        OWNER: ${{ github.repository_owner }}
+        INPUT_IMAGE_NAME: ${{ inputs.image_name }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_BAKE_FILE: ${{ inputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+        REPO_FULL: ${{ github.repository }}
       run: |
         set -euo pipefail
 
         VERSION="${NORMALIZE_VERSION}"
         TAG="${NORMALIZE_TAG}"
-        ENV="${{ steps.detect-env.outputs.environment }}"
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        DEPLOY_MODEL="${{ inputs.deployment-model }}"
-        ENVS='${{ inputs.environments }}'
-        IDS='${{ inputs.prerelease-identifiers }}'
-        PREFIX="${{ inputs.tag-prefix }}"
+        ENV="${DETECT_ENV}"
+        IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
+        DEPLOY_MODEL="${INPUT_DEPLOYMENT_MODEL}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        IDS="${INPUT_PRERELEASE_IDENTIFIERS}"
+        PREFIX="${INPUT_TAG_PREFIX}"
 
-        OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-        export IMAGE_NAME="${OWNER_LOWER}/${{ inputs.image_name }}"
-        export REGISTRY="${{ inputs.registry }}"
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+        export REGISTRY="${INPUT_REGISTRY}"
         export VERSION="${VERSION}"
-        export PLATFORMS="${{ inputs.platforms }}"
+        export PLATFORMS="${INPUT_PLATFORMS}"
 
         # Discover all bake targets
-        BAKE_OUTPUT=$(docker buildx bake -f "${{ inputs.bake_file }}" "${{ inputs.bake_target }}" --print 2>/dev/null)
+        BAKE_OUTPUT=$(docker buildx bake -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" --print 2>/dev/null)
         IMAGES=$(echo "${BAKE_OUTPUT}" | jq -c '.target | to_entries | map({target: .key, image: (.value.tags[0] // "" | split(":")[0])})')
         echo "Images to promote: ${IMAGES}"
 
@@ -1469,30 +1501,30 @@ runs:
         SOURCE_TAG_SUFFIX=""
         if [ "${IS_FIRST_ENV}" == "true" ]; then
           # Find the PR associated with this release tag via GitHub API
-          COMMIT_SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" \
+          COMMIT_SHA=$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" \
             --jq 'if .object.type == "tag" then .object.sha else .object.sha end' 2>/dev/null || echo "")
 
           if [ -n "${COMMIT_SHA}" ]; then
             # Resolve annotated tag to commit
-            TAG_TYPE=$(gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" --jq '.object.type' 2>/dev/null || echo "commit")
+            TAG_TYPE=$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" --jq '.object.type' 2>/dev/null || echo "commit")
             if [ "${TAG_TYPE}" == "tag" ]; then
-              COMMIT_SHA=$(gh api "repos/${{ github.repository }}/git/tags/${COMMIT_SHA}" --jq '.object.sha' 2>/dev/null || echo "${COMMIT_SHA}")
+              COMMIT_SHA=$(gh api "repos/${REPO_FULL}/git/tags/${COMMIT_SHA}" --jq '.object.sha' 2>/dev/null || echo "${COMMIT_SHA}")
             fi
 
             PR_NUMBER=""
             CURRENT_SHA="${COMMIT_SHA}"
             for _ in 1 2 3 4 5; do
-              PR_NUMBER=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}/pulls" \
+              PR_NUMBER=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}/pulls" \
                 --jq '[.[] | select(.merged_at != null)] | .[0].number // empty' 2>/dev/null || echo "")
               [ -n "${PR_NUMBER}" ] && break
               # Check commit message for PR reference
-              MSG_PR=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}" \
+              MSG_PR=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}" \
                 --jq '.commit.message' 2>/dev/null | grep -oE '\(#[0-9]+\)|Merge pull request #[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "")
               if [ -n "${MSG_PR}" ]; then
                 PR_NUMBER="${MSG_PR}"
                 break
               fi
-              CURRENT_SHA=$(gh api "repos/${{ github.repository }}/commits/${CURRENT_SHA}" \
+              CURRENT_SHA=$(gh api "repos/${REPO_FULL}/commits/${CURRENT_SHA}" \
                 --jq '.parents[0].sha // empty' 2>/dev/null || echo "")
               [ -z "${CURRENT_SHA}" ] && break
             done
@@ -1508,7 +1540,7 @@ runs:
           # Find latest tag with the previous environment's identifier
           BASE_VERSION=$(echo "${VERSION}" | sed 's/-[a-zA-Z][^.]*\.[0-9]*$//')
           SEARCH_PREFIX="${PREFIX}${BASE_VERSION}-${PREV_IDENTIFIER}."
-          SOURCE_TAG_SUFFIX=$(gh api "repos/${{ github.repository }}/git/matching-refs/tags/${SEARCH_PREFIX}" \
+          SOURCE_TAG_SUFFIX=$(gh api "repos/${REPO_FULL}/git/matching-refs/tags/${SEARCH_PREFIX}" \
             --jq '[.[].ref | ltrimstr("refs/tags/")] | sort_by(ltrimstr("'"${PREFIX}${BASE_VERSION}-${PREV_IDENTIFIER}."'") | tonumber) | last // empty' \
             2>/dev/null || echo "")
           if [ -n "${SOURCE_TAG_SUFFIX}" ]; then
@@ -1587,7 +1619,7 @@ runs:
             EXTRA_TAGS=""
             [ "${IS_PRERELEASE}" == "false" ] && EXTRA_TAGS="--set ${TARGET}.tags=${IMAGE}:latest"
             docker buildx bake \
-              -f "${{ inputs.bake_file }}" "${TARGET}" \
+              -f "${INPUT_BAKE_FILE}" "${TARGET}" \
               --set "${TARGET}.tags=${NEW_TAG}" \
               ${EXTRA_TAGS} \
               --set "${TARGET}.cache-from=type=gha,scope=buildkit-${TARGET}" \
@@ -1709,16 +1741,21 @@ runs:
         REPO: ${{ github.event.repository.name }}
         NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
         NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        DETECT_ENV: ${{ steps.detect-env.outputs.environment }}
+        DETECT_PRERELEASE_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        INPUT_ENVIRONMENTS: ${{ inputs.environments }}
+        INPUT_PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
+        INPUT_PROMOTE_TARGET_BRANCH: ${{ inputs.promote-target-branch }}
       run: |
         set -euo pipefail
 
         VERSION="${NORMALIZE_VERSION}"
         TAG="${NORMALIZE_TAG}"
-        ENV="${{ steps.detect-env.outputs.environment }}"
-        PRERELEASE_IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        ENVS='${{ inputs.environments }}'
-        PREFIX="${{ inputs.promote-branch-prefix }}"
-        TARGET="${{ inputs.promote-target-branch }}"
+        ENV="${DETECT_ENV}"
+        PRERELEASE_IDENTIFIER="${DETECT_PRERELEASE_IDENTIFIER}"
+        ENVS="${INPUT_ENVIRONMENTS}"
+        PREFIX="${INPUT_PROMOTE_BRANCH_PREFIX}"
+        TARGET="${INPUT_PROMOTE_TARGET_BRANCH}"
 
         LAST_ENV=$(echo "${ENVS}" | jq -r '.[-1]')
         if [ "${ENV}" == "${LAST_ENV}" ]; then

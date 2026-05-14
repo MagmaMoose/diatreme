@@ -16,10 +16,16 @@
 #                   to the github-actions bot.
 #
 # Side effects:
-#   - Configures git user.name / user.email if either is unset.
+#   - Configures git user.name / user.email only when each is not already
+#     set in the local git config. A caller that pre-configures their own
+#     identity is preserved.
 #   - Writes `released=true|false` to $GITHUB_OUTPUT when that variable is
 #     set (always set inside an Actions step). The caller is responsible
 #     for any tool-specific outputs (version, tag, etc.).
+#   - Writes git push stderr to a per-invocation temp file under
+#     ${RUNNER_TEMP:-/tmp} and removes it on exit via a trap, so
+#     concurrent invocations in the same job don't read each other's
+#     diagnostics.
 #
 # Exit codes:
 #   0 - tag is on remote (either we pushed it, or a concurrent run did)
@@ -39,10 +45,21 @@ set -euo pipefail
 : "${TAG:?TAG is required}"
 : "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 
-git config user.name  "${GIT_AUTHOR_NAME:-github-actions[bot]}"
-git config user.email "${GIT_AUTHOR_EMAIL:-github-actions[bot]@users.noreply.github.com}"
+# Only set git identity when the caller hasn't already configured one.
+# `git config --get` exits non-zero when the key is unset.
+if ! git config --get user.name >/dev/null 2>&1; then
+  git config user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}"
+fi
+if ! git config --get user.email >/dev/null 2>&1; then
+  git config user.email "${GIT_AUTHOR_EMAIL:-github-actions[bot]@users.noreply.github.com}"
+fi
 
-REMOTE_URL=$(git remote get-url origin)
+# Read the raw remote.origin.url config rather than `git remote get-url`
+# so any caller-side `insteadOf` rewrites don't change what we see — we
+# want the URL the caller actually wrote, so we can synthesise a
+# matching token-prefixed form. Git applies any rewrites again when it
+# pushes, so the eventual target is unchanged.
+REMOTE_URL=$(git config --get remote.origin.url)
 if [[ "${REMOTE_URL}" =~ ^https:// ]]; then
   AUTHED_URL="https://x-access-token:${GITHUB_TOKEN}@${REMOTE_URL#https://}"
 elif [[ "${REMOTE_URL}" =~ ^git@([^:]+):(.+)$ ]]; then
@@ -51,6 +68,12 @@ else
   echo "::error::Unsupported git remote URL format for authenticated tag push: ${REMOTE_URL}"
   exit 1
 fi
+
+# Per-invocation stderr capture, cleaned up on exit. Two concurrent
+# invocations in the same job (e.g. a matrix run) would otherwise
+# read each other's diagnostics from a shared /tmp path.
+PUSH_ERR=$(mktemp "${RUNNER_TEMP:-/tmp}/tag_push.err.XXXXXX")
+trap 'rm -f "${PUSH_ERR}"' EXIT
 
 emit_released() {
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -74,14 +97,14 @@ fi
 
 # Push, with race recovery: if the push fails and the tag has since
 # appeared on the remote, treat as a clean race loss.
-if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
+if ! git push "${AUTHED_URL}" "${TAG}" 2>"${PUSH_ERR}"; then
   if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
     echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race between check and push). Skipping."
     git tag -d "${TAG}" 2>/dev/null || true
     emit_released "false"
     exit 0
   fi
-  echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
+  echo "::error::Failed to push tag ${TAG}: $(head -3 "${PUSH_ERR}" 2>/dev/null)"
   exit 1
 fi
 

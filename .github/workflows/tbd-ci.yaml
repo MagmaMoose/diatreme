@@ -1,6 +1,6 @@
 name: TBD CI — Build and Push PR Image
 
-# Thin wrapper around calebsargeant/semantic-release@v1 (mode: ci).
+# Thin wrapper around magmamoose/release-runner@v1 (mode: ci).
 # Prefer using the action directly for full control:
 #
 #   jobs:
@@ -11,7 +11,7 @@ name: TBD CI — Build and Push PR Image
 #         packages: write
 #         pull-requests: read
 #       steps:
-#         - uses: calebsargeant/semantic-release@v1
+#         - uses: magmamoose/release-runner@v1
 #           with:
 #             mode: ci
 #             image_name: my-app
@@ -58,7 +58,7 @@ jobs:
       packages: write
       pull-requests: read
     steps:
-      - uses: calebsargeant/semantic-release@v1
+      - uses: magmamoose/release-runner@e88a8245037aab4f1c030852048efcdd4e54991b # v1
         with:
           mode: ci
           image_name:              ${{ inputs.image_name }}
