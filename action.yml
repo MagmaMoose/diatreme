@@ -1123,13 +1123,14 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
+        IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        PREFIX: ${{ inputs.tag-prefix }}
+        BASE_VERSION: ${{ steps.gitversion.outputs.majorMinorPatch }}
       run: |
         set -euo pipefail
-        IS_PRERELEASE="${{ steps.detect-env.outputs.is_prerelease }}"
-        IDENTIFIER="${{ steps.detect-env.outputs.prerelease_identifier }}"
-        PREFIX="${{ inputs.tag-prefix }}"
         if [ "${IS_PRERELEASE}" == "true" ]; then
-          BASE="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          BASE="${BASE_VERSION}"
           LATEST=$(git tag -l "${PREFIX}${BASE}-${IDENTIFIER}.*" | sort -V | tail -1)
           if [ -z "${LATEST}" ]; then
             PRE_NUM=1
@@ -1139,57 +1140,18 @@ runs:
           fi
           VERSION="${BASE}-${IDENTIFIER}.${PRE_NUM}"
         else
-          VERSION="${{ steps.gitversion.outputs.majorMinorPatch }}"
+          VERSION="${BASE_VERSION}"
         fi
         TAG="${PREFIX}${VERSION}"
         echo "Creating tag: ${TAG}"
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        REMOTE_URL=$(git remote get-url origin)
-        if [[ "${REMOTE_URL}" =~ ^https:// ]]; then
-          AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
-        elif [[ "${REMOTE_URL}" =~ ^git@([^:]+):(.+)$ ]]; then
-          AUTHED_URL="https://x-access-token:${GITHUB_TOKEN}@${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-        else
-          echo "::error::Unsupported git remote URL format for authenticated tag push: ${REMOTE_URL}"
-          exit 1
-        fi
-
-        # Concurrency safety: a parallel run on the same branch may have
-        # raced us and already created this tag. Check the remote first;
-        # if the tag exists, treat it as "released" (the parallel run
-        # owns it) and skip re-publishing — otherwise tag and push,
-        # detecting the same race in the push-failure branch as a
-        # belt-and-suspenders.
-        if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-          echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-          echo "released=false"     >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        git tag -a "${TAG}" -m "chore(release): ${TAG}"
-
-        if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
-          # Re-check the remote — if the tag now exists, another run beat
-          # us between the ls-remote and the push. That's a clean race
-          # outcome: continue gracefully without failing the workflow.
-          if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-            echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race). Skipping downstream steps."
-            git tag -d "${TAG}" 2>/dev/null || true
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-            echo "released=false"     >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
-          exit 1
-        fi
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
         # GitHub Release is published in a later step, after image
         # promotion, so downstream `release:published` listeners see
         # versioned images in the registry.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
@@ -1206,47 +1168,15 @@ runs:
         set -euo pipefail
         VERSION="${OVERRIDE_VERSION}"
         TAG="${OVERRIDE_TAG}"
-
         echo "Creating tag: ${TAG}"
-        git config user.name  "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        REMOTE_URL=$(git remote get-url origin)
-        if [[ "${REMOTE_URL}" =~ ^https:// ]]; then
-          AUTHED_URL=$(echo "${REMOTE_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
-        elif [[ "${REMOTE_URL}" =~ ^git@([^:]+):(.+)$ ]]; then
-          AUTHED_URL="https://x-access-token:${GITHUB_TOKEN}@${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-        else
-          echo "::error::Unsupported git remote URL format for authenticated tag push: ${REMOTE_URL}"
-          exit 1
-        fi
-
-        if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-          echo "::notice::Tag ${TAG} already exists on remote — a parallel run published it. Treating this run as a no-op release."
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-          echo "released=false"     >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        git tag -a "${TAG}" -m "chore(release): ${TAG}"
-
-        if ! git push "${AUTHED_URL}" "${TAG}" 2>/tmp/tag_push.err; then
-          if git ls-remote --tags "${AUTHED_URL}" "refs/tags/${TAG}" 2>/dev/null | grep -Fq "refs/tags/${TAG}"; then
-            echo "::notice::Tag ${TAG} now exists on remote (parallel run won the race). Skipping downstream steps."
-            git tag -d "${TAG}" 2>/dev/null || true
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-            echo "released=false"     >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::error::Failed to push tag ${TAG}: $(cat /tmp/tag_push.err 2>/dev/null | head -3)"
-          exit 1
-        fi
+        # Shared race-safe tag push. The script emits `released=true|false`
+        # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
+        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
-        echo "released=true"      >> "$GITHUB_OUTPUT"
 
     - name: Run release-please
       id: release-please
