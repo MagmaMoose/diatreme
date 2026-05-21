@@ -63,6 +63,7 @@ INPUT_GROUPS: list[tuple[str, list[str]]] = [
   ("Version file injection", [
     "version-file",
     "version-file-json-path",
+    "version-file-yaml-path",
   ]),
   ("GitHub Projects integration", [
     "aggregate-github-projects",
