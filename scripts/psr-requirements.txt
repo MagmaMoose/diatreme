@@ -26,4 +26,4 @@ python-semantic-release==10.6.2
 # Nothing in this repo changed: psr declares `gitpython~=3.0`, so the next fresh
 # venv resolved 3.1.60 and the breakage reached consumers on its own
 # Upstream: python-semantic-release issue #1476, fix PR #1477 (unreleased).
-gitpython==3.1.59
+gitpython==3.1.61
