@@ -47,3 +47,16 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   stay identical or the org signs one set of images and inventories another. There is a bats
   guard counting the two derivation literals; if you add a fourth consumer, update it rather
   than deleting it.
+
+- **Trivy emits the newest CycloneDX spec it knows, and Dependency-Track rejects any spec it
+  does not.** `HTTP 400 {"detail":"Unrecognized specVersion 1.7"}` — Trivy 0.71 writes 1.7,
+  DT 4.14.2 accepts up to 1.6, and Trivy has NO flag to choose a version. So a routine
+  scanner bump silently outruns the server. It is the quiet kind of failure: the sink is
+  failure-isolated so nothing goes red, the DefectDojo half of the SAME scan imports fine
+  (HTTP 201), and `autoCreate` still leaves a project behind — so the symptom is a project
+  that exists, was created today, and has never had a BOM. Every released image failed this
+  way and it read as a Dependency-Track fault rather than a spec mismatch. The uploader now
+  relabels down to `DT_MAX_CYCLONEDX_SPEC` (default 1.6); raise that when the server learns
+  a newer spec, and never "fix" this by pinning Trivy — a security scanner has to stay
+  current. Note the same trap is latent in Chargate: it ships Syft, which still emits 1.6,
+  so it will break identically the day Syft moves.
