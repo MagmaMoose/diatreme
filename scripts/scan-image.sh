@@ -118,6 +118,20 @@ for REF in "${REFS[@]}"; do
   fi
   DT_PROJECT_VERSION="${DEPENDENCY_TRACK_PROJECT_VERSION:-${REF_TAG}}"
 
+  # `repo:<name>` is the join key a consumer needs to group a repo's Dependency-Track
+  # projects. It cannot be derived downstream: an image is named after the IMAGE, and
+  # a repo may build several (dunmir -> dunmir-agent, -backend, -frontend), so the
+  # image name does not identify the repo. Only this workflow knows both.
+  # `sbom:image` distinguishes these from the source SBOM Chargate pushes for the
+  # same repo. Caller-supplied tags are appended, not replaced.
+  DT_PROJECT_TAGS="sbom:image"
+  if [ -n "${REPO_FULL:-}" ]; then
+    DT_PROJECT_TAGS="repo:${REPO_FULL##*/},${DT_PROJECT_TAGS}"
+  fi
+  if [ -n "${DEPENDENCY_TRACK_PROJECT_TAGS:-}" ]; then
+    DT_PROJECT_TAGS="${DT_PROJECT_TAGS},${DEPENDENCY_TRACK_PROJECT_TAGS}"
+  fi
+
   SBOM="${WORK}/$(echo "${NAME_PATH}" | tr '/:' '__').cdx.json"
   REPORT="${WORK}/$(echo "${NAME_PATH}" | tr '/:' '__').trivy.json"
 
@@ -150,6 +164,7 @@ for REF in "${REFS[@]}"; do
   PROJECT_NAME="${DT_PROJECT_NAME}" \
   PROJECT_VERSION="${DT_PROJECT_VERSION}" \
   AUTO_CREATE="${DEPENDENCY_TRACK_AUTO_CREATE:-true}" \
+  PROJECT_TAGS="${DT_PROJECT_TAGS}" \
     "${SCRIPT_DIR}/upload-sbom-dependency-track.sh"
 
   REPORT_FILE="${REPORT}" \

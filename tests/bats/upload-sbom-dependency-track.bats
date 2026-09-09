@@ -232,3 +232,48 @@ _bom_spec() {
   [ "$status" -eq 0 ]
   grep -Fq 'formfile:bom:{"bomFormat":"CycloneDX","components":[]}' "${STUB_LOG}"
 }
+
+# ── project tags ───────────────────────────────────────────────────────────
+# `repo:<name>` is a join key, not decoration. An image project is named after the
+# IMAGE (dunmir-agent), and a repo may build several, so nothing downstream can tell
+# which repo produced it — only the workflow knows both. A consumer grouping a
+# repo's Dependency-Track projects has no other way in.
+
+@test "tags are sent as repeated projectTags form fields" {
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com DEPENDENCY_TRACK_API_KEY=dt-key \
+    BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v \
+    PROJECT_TAGS="repo:dunmir,sbom:image" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq 'projectTags=repo:dunmir' "${STUB_LOG}"
+  grep -Fq 'projectTags=sbom:image' "${STUB_LOG}"
+}
+
+@test "no PROJECT_TAGS means no projectTags field at all" {
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com DEPENDENCY_TRACK_API_KEY=dt-key \
+    BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  ! grep -q 'projectTags' "${STUB_LOG}"
+}
+
+@test "blank and whitespace-only tags are dropped, not sent empty" {
+  # Dependency-Track will create a tag whose name is the empty string, and removing
+  # it afterwards is awkward.
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com DEPENDENCY_TRACK_API_KEY=dt-key \
+    BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v \
+    PROJECT_TAGS="repo:x,, ,sbom:image," "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  # grep -c counts LINES, and the curl stub logs the whole argv on one line, so
+  # count occurrences instead.
+  [ "$(grep -o 'projectTags=' "${STUB_LOG}" | wc -l | tr -d ' ')" -eq 2 ]
+  grep -Fq 'projectTags=repo:x' "${STUB_LOG}"
+  grep -Fq 'projectTags=sbom:image' "${STUB_LOG}"
+}
+
+@test "surrounding whitespace is stripped from each tag" {
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com DEPENDENCY_TRACK_API_KEY=dt-key \
+    BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v \
+    PROJECT_TAGS=" repo:dunmir , sbom:image " "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq 'projectTags=repo:dunmir' "${STUB_LOG}"
+  grep -Fq 'projectTags=sbom:image' "${STUB_LOG}"
+}
