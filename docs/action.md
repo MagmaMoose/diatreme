@@ -74,15 +74,22 @@ own name (lowercased).
 
 ## Image scanning and SBOMs
 
-When `mode: ci` builds the `pr-<N>` image it can scan it (Trivy) and route the
-results to security backends:
+With `image-scan: 'true'`, Diatreme scans the assembled image with Trivy — the
+`pr-<N>` candidate in `mode: ci`, and the promoted release tag in `mode: release`.
 
-- The **CycloneDX SBOM** goes to **Dependency-Track**.
-- Optional **findings** go to **DefectDojo**.
+**Only the released scan reports.** The security backends describe what is
+deployed, so they get one project version per release rather than one per pull
+request:
 
-Reporting is visibility-first: **non-blocking** unless you set `image-scan-gate`,
-each sink is **failure-isolated** (a sink outage never fails your build), and a
-scanner that cannot run is a **build error**, not a silent pass.
+- The released image's **CycloneDX SBOM** goes to **Dependency-Track**.
+- Optional released-image **findings** go to **DefectDojo**.
+
+The `pr-<N>` scan feeds the gate and the log, and reports nowhere.
+
+Reporting is visibility-first: **non-blocking** unless you set `image-scan-gate`
+(which applies to `mode: ci` only — by release time the image has shipped), each
+sink is **failure-isolated** (a sink outage never fails your build), and a scanner
+that cannot run is a **build error**, not a silent pass.
 
 ## Signing images and provenance
 

@@ -239,3 +239,59 @@ teardown() {
 @test "action.yml wires the strict sink override into the scan step env" {
   grep -Eq "STRICT: \\\$\{\{ inputs.image-scan-strict \}\}" "${ACTION_YML}"
 }
+
+# ── release-only sinks ─────────────────────────────────────────────────────
+# Dependency-Track and DefectDojo describe what is DEPLOYED, so only the promoted
+# release tag is reported. Wiring the sinks into the pr-<N> scan instead creates a
+# project version per pull request for ever, and leaves the inventory describing
+# whichever PR ran last rather than what actually shipped.
+#
+# The split is invisible at runtime — a pr-<N> upload succeeds and looks correct —
+# so these guard the step env, which is the only place it is expressed.
+
+# The `run:` body of a named step, up to the next step at the same indent.
+scan_step_env() {
+  awk -v name="    - name: $1\$" '
+    $0 ~ name {inblock=1; next}
+    inblock && /^    - name: / {exit}
+    inblock && /^      run: \|/ {exit}
+    inblock {print}
+  ' "${ACTION_YML}"
+}
+
+@test "the pr-<N> scan reports to no sink" {
+  env_block="$(scan_step_env 'Scan image and report')"
+  [ -n "${env_block}" ]
+  # It still scans and can still gate...
+  echo "${env_block}" | grep -Fq "SCAN_GATE:"
+  # ...but carries no Dependency-Track or DefectDojo credentials at all.
+  ! echo "${env_block}" | grep -Eq "DEPENDENCY_TRACK_|DEFECTDOJO_"
+}
+
+@test "the released-image scan carries both sinks" {
+  env_block="$(scan_step_env 'Scan released images and report')"
+  [ -n "${env_block}" ]
+  echo "${env_block}" | grep -Fq "DEPENDENCY_TRACK_URL:"
+  echo "${env_block}" | grep -Fq "DEPENDENCY_TRACK_API_KEY:"
+  echo "${env_block}" | grep -Fq "DEFECTDOJO_URL:"
+  echo "${env_block}" | grep -Fq "DEFECTDOJO_API_KEY:"
+}
+
+@test "the released-image scan never gates" {
+  # The tag is cut and the image pushed by this point; a gate here could only
+  # paint a finished release red, never un-ship it.
+  echo "$(scan_step_env 'Scan released images and report')" | grep -Fq "SCAN_GATE: 'false'"
+}
+
+@test "the released-image scan runs only on an actual release" {
+  grep -Eq "inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-scan == 'true'" "${ACTION_YML}"
+}
+
+@test "scanning and signing derive the same released refs" {
+  # Both re-derive `<repo>:${NORMALIZE_TAG}` from the bake targets. If they drift,
+  # the org signs one set of images and inventories another.
+  count=$(grep -cF 'IMAGE_REFS="${IMAGE_REFS}${repo}:${NORMALIZE_TAG}"' "${ACTION_YML}")
+  [ "${count}" -eq 2 ]
+  count=$(grep -cF 'IMAGE_REFS="${REGISTRY}/${IMAGE_NAME}:${NORMALIZE_TAG}"' "${ACTION_YML}")
+  [ "${count}" -eq 2 ]
+}

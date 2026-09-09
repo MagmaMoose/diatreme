@@ -57,8 +57,9 @@ no token to rotate.
   **signed** release commits.
 - **Docker, promoted not rebuilt** — build `pr-N` images, then promote the *exact scanned
   artifact* to the release tag by digest, verifying provenance first.
-- **Supply chain built in** — scan the assembled image and route a CycloneDX SBOM to
-  Dependency-Track, with optional findings to DefectDojo.
+- **Supply chain built in** — scan the assembled image on the PR to gate it, then route
+  the *released* image's CycloneDX SBOM to Dependency-Track, with optional findings to
+  DefectDojo. One project version per release, not one per pull request.
 - **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers and pip, to
   GitHub Packages or public registries.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs and native
@@ -73,7 +74,7 @@ no token to rotate.
 flowchart LR
   C[Conventional commits] --> D{Diatreme}
   D -->|version| R[Tag · GitHub Release · Changelog]
-  D -->|docker| I[Build pr-N → Scan → SBOM → Promote by digest]
+  D -->|docker| I[Build pr-N → Scan → Promote by digest → Scan release → SBOM]
   D -->|packages| P[npm · NuGet · Maven · Gradle · pip · gem]
   I --> DT[(Dependency-Track)]
   I --> DD[(DefectDojo)]

@@ -31,3 +31,19 @@
 - After editing `scripts/`, run `shellcheck -S warning scripts/*.sh` and `actionlint`.
 
 Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
+
+- **The image sinks fire in `mode: release` ONLY — never wire them into the `pr-<N>` scan.**
+  Dependency-Track and DefectDojo describe what is *deployed*. A pr-`<N>` upload succeeds and
+  looks completely correct, which is why this is easy to get wrong: the damage is cumulative,
+  not immediate. One Dependency-Track project version per pull request, for ever, and the
+  "current" inventory ends up describing whichever PR happened to run last rather than what
+  is actually running. Chargate learned the same lesson on its source BOM and already refuses
+  to upload on pull requests. The CI scan still runs — its job is `image-scan-gate` and the
+  log — but it carries no sink env at all, and `tests/bats/scan-image.bats` asserts that in
+  both directions. A severity gate on the release scan is likewise pointless: the tag is cut
+  and the image pushed by then, so it could only paint a finished release red.
+- **Released refs are derived in THREE places now** (Promote images, cosign signing, and the
+  release scan), each re-running `bake --print` and appending `:${NORMALIZE_TAG}`. They must
+  stay identical or the org signs one set of images and inventories another. There is a bats
+  guard counting the two derivation literals; if you add a fourth consumer, update it rather
+  than deleting it.

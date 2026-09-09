@@ -388,16 +388,23 @@ inputs:
     required: false
     default: 'false'
 
-  # ── Image scanning & SBOM (mode: ci) ──────────────────────────────────────
-  # Scan the assembled pr-<N> image and route results to their sinks: a
-  # CycloneDX SBOM to Dependency-Track (component CVEs), and optional findings
-  # to DefectDojo (OS CVEs, misconfigurations, secrets in layers). Reporting is
-  # visibility-first — a successful scan never blocks the PR unless
-  # `image-scan-gate` is on. A scanner that cannot run is a build error.
+  # ── Image scanning & SBOM ─────────────────────────────────────────────────
+  # Two scans with two different jobs, and the split matters:
+  #   mode: ci      scans the pr-<N> candidate. Gate + log only, reports NOWHERE.
+  #   mode: release scans the promoted release tag, and is the ONLY thing that
+  #                 feeds Dependency-Track (component CVEs) and DefectDojo (OS
+  #                 CVEs, misconfigurations, secrets in layers).
+  # So the sinks describe what is deployed — one project version per release —
+  # instead of accumulating one per pull request and leaving the inventory
+  # describing whichever PR ran last. Reporting is visibility-first: a successful
+  # scan never blocks unless `image-scan-gate` is on. A scanner that cannot run is
+  # a build error.
   image-scan:
     description: |
-      Scan the assembled pr-<N> image after build (mode: ci) and emit its
-      SBOM + findings. Off by default. Requires `image_name`.
+      Scan the built image and emit its SBOM + findings. In `mode: ci` this scans
+      the pr-<N> candidate for the gate; in `mode: release` it scans the promoted
+      release tag and ships the results to the configured sinks. Off by default.
+      Requires `image_name`.
     required: false
     default: 'false'
 
@@ -420,7 +427,9 @@ inputs:
       Block the build when findings at/above `image-scan-severity` exist.
       Default false (non-blocking, visibility only) — start here and tighten
       later. This is a blunt severity threshold; net-new diffing against the
-      base image is the intended direction.
+      base image is the intended direction. `mode: ci` only: by release time the
+      tag is cut and the image pushed, so a gate there could only paint a
+      finished release red, never un-ship it.
     required: false
     default: 'false'
 
@@ -444,10 +453,11 @@ inputs:
 
   dependency-track-url:
     description: |
-      Dependency-Track base URL (e.g. https://dtrack.example.com). When set,
-      the image's CycloneDX SBOM is uploaded as the assembled-image project —
-      distinct from any source-dependency SBOM project for the same repo.
-      Empty disables the sink. Outages are non-blocking.
+      Dependency-Track base URL (e.g. https://dtrack.example.com). When set, the
+      RELEASED image's CycloneDX SBOM is uploaded as the assembled-image project —
+      distinct from any source-dependency SBOM project for the same repo. Uploads
+      happen in `mode: release` only; the pr-<N> scan reports nowhere. Empty
+      disables the sink. Outages are non-blocking.
     required: false
     default: ''
 
@@ -465,7 +475,7 @@ inputs:
     default: ''
 
   dependency-track-project-version:
-    description: 'Dependency-Track project version. Defaults to the image tag (e.g. pr-12).'
+    description: 'Dependency-Track project version. Defaults to the released image tag (e.g. v1.2.3).'
     required: false
     default: ''
 
@@ -478,10 +488,11 @@ inputs:
 
   defectdojo-url:
     description: |
-      DefectDojo base URL (e.g. https://dd.example.com). When set, the Trivy
-      findings report is imported. Empty disables the sink. Outages are
-      non-blocking. Optional — the SBOM → Dependency-Track feed already yields
-      component CVEs; this adds OS CVEs / misconfigs / secrets.
+      DefectDojo base URL (e.g. https://dd.example.com). When set, the RELEASED
+      image's Trivy findings report is imported (`mode: release` only, like the
+      Dependency-Track sink). Empty disables the sink. Outages are non-blocking.
+      Optional — the SBOM → Dependency-Track feed already yields component CVEs;
+      this adds OS CVEs / misconfigs / secrets.
     required: false
     default: ''
 
@@ -1406,18 +1417,13 @@ runs:
         SCANNERS: ${{ inputs.image-scan-scanners }}
         SCAN_GATE: ${{ inputs.image-scan-gate }}
         STRICT: ${{ inputs.image-scan-strict }}
-        DEPENDENCY_TRACK_URL: ${{ inputs.dependency-track-url }}
-        DEPENDENCY_TRACK_API_KEY: ${{ inputs.dependency-track-api-key }}
-        DEPENDENCY_TRACK_PROJECT_NAME: ${{ inputs.dependency-track-project-name }}
-        DEPENDENCY_TRACK_PROJECT_VERSION: ${{ inputs.dependency-track-project-version }}
-        DEPENDENCY_TRACK_AUTO_CREATE: ${{ inputs.dependency-track-auto-create }}
-        DEFECTDOJO_URL: ${{ inputs.defectdojo-url }}
-        DEFECTDOJO_API_KEY: ${{ inputs.defectdojo-api-key }}
-        DEFECTDOJO_ENGAGEMENT: ${{ inputs.defectdojo-engagement }}
-        DEFECTDOJO_PRODUCT_NAME: ${{ inputs.defectdojo-product-name }}
-        DEFECTDOJO_PRODUCT_TYPE: ${{ inputs.defectdojo-product-type }}
-        DEFECTDOJO_ENGAGEMENT_NAME: ${{ inputs.defectdojo-engagement-name }}
-        DEFECTDOJO_CLOSE_OLD: ${{ inputs.defectdojo-close-old }}
+        # NO sink env here, deliberately. The pr-<N> image is a candidate, not a
+        # shipped artifact: reporting it would create one Dependency-Track project
+        # version per pull request, for ever, and leave the inventory describing
+        # whichever PR happened to run last rather than what is actually deployed.
+        # The PR scan's job is the gate and the log; the released image is reported
+        # by "Scan released images and report" below. (Same rule Chargate applies to
+        # its own source BOM: Dependency-Track tracks shipped artifacts.)
       run: |
         set -euo pipefail
 
@@ -2499,6 +2505,85 @@ runs:
     # makes a cluster's cosign `verifyImages` admission policy enforceable for
     # these images. Opt-in via `image-sign: true`; needs `attestations: write`
     # (plus the `id-token` / `packages: write` the release image flow already needs).
+    # ─────────────────────────────────────────────────────────────────────────
+    # RELEASE MODE — scan the RELEASED image, emit SBOM + findings
+    # ─────────────────────────────────────────────────────────────────────────
+    # This is the only place the image sinks fire. Dependency-Track and DefectDojo
+    # describe what is deployed, so they get the promoted release tag and nothing
+    # else — one project version per release, not one per pull request. The CI scan
+    # above still runs on pr-<N> for the gate, but reports nowhere.
+    #
+    # Runs after "Promote images" so the ref exists and resolves to the artifact
+    # that was actually promoted (or, on the fresh-build fallback, actually built).
+    # Refs are re-derived exactly as the cosign step does — each bake target's repo
+    # at the release tag — so signing and scanning always cover the same images.
+    - name: Install Trivy (release)
+      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-scan == 'true'
+      uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+      with:
+        cache: true
+
+    - name: Scan released images and report
+      id: scan-released-image
+      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-scan == 'true'
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        INPUT_IMAGE_NAME: ${{ steps.resolve-image.outputs.image_name }}
+        STRATEGY: ${{ steps.resolve-image.outputs.strategy }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_BAKE_FILE: ${{ steps.resolve-image.outputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+        BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
+        NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        SCAN_SEVERITY: ${{ inputs.image-scan-severity }}
+        SCANNERS: ${{ inputs.image-scan-scanners }}
+        # The release is already cut and the image already pushed by this point, so
+        # a severity gate here could not un-ship anything — it would only paint a
+        # completed release red. Gating belongs on the pull request.
+        SCAN_GATE: 'false'
+        STRICT: ${{ inputs.image-scan-strict }}
+        DEPENDENCY_TRACK_URL: ${{ inputs.dependency-track-url }}
+        DEPENDENCY_TRACK_API_KEY: ${{ inputs.dependency-track-api-key }}
+        DEPENDENCY_TRACK_PROJECT_NAME: ${{ inputs.dependency-track-project-name }}
+        DEPENDENCY_TRACK_PROJECT_VERSION: ${{ inputs.dependency-track-project-version }}
+        DEPENDENCY_TRACK_AUTO_CREATE: ${{ inputs.dependency-track-auto-create }}
+        DEFECTDOJO_URL: ${{ inputs.defectdojo-url }}
+        DEFECTDOJO_API_KEY: ${{ inputs.defectdojo-api-key }}
+        DEFECTDOJO_ENGAGEMENT: ${{ inputs.defectdojo-engagement }}
+        DEFECTDOJO_PRODUCT_NAME: ${{ inputs.defectdojo-product-name }}
+        DEFECTDOJO_PRODUCT_TYPE: ${{ inputs.defectdojo-product-type }}
+        DEFECTDOJO_ENGAGEMENT_NAME: ${{ inputs.defectdojo-engagement-name }}
+        DEFECTDOJO_CLOSE_OLD: ${{ inputs.defectdojo-close-old }}
+      run: |
+        set -euo pipefail
+
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+        export REGISTRY="${INPUT_REGISTRY}"
+        export VERSION="${NORMALIZE_VERSION}"
+        # Empty INPUT_PLATFORMS ⇒ defer to docker-bake.hcl (see the build step).
+        if [ -n "${INPUT_PLATFORMS}" ]; then export PLATFORMS="${INPUT_PLATFORMS}"; fi
+
+        # Re-derive the released refs exactly like Promote images and the cosign
+        # step do: the repo from each bake target's canonical tag, at the release
+        # tag. The no-bake Dockerfile path promoted a single repo.
+        if [ "${STRATEGY}" = "dockerfile" ]; then
+          IMAGE_REFS="${REGISTRY}/${IMAGE_NAME}:${NORMALIZE_TAG}"$'\n'
+        else
+          BAKE_OUTPUT=$(docker buildx bake -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" --print 2>/dev/null)
+          IMAGE_REFS=""
+          while IFS= read -r repo; do
+            [ -n "${repo}" ] && IMAGE_REFS="${IMAGE_REFS}${repo}:${NORMALIZE_TAG}"$'\n'
+          done < <(echo "${BAKE_OUTPUT}" | jq -r '.target[].tags[0] // empty | split(":")[0]' | sort -u)
+        fi
+
+        echo "Released image(s) to scan:"
+        printf '%s' "${IMAGE_REFS}"
+        IMAGE_REFS="${IMAGE_REFS}" "${GITHUB_ACTION_PATH}/scripts/scan-image.sh"
+
     - name: Install cosign
       if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-sign == 'true'
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
