@@ -479,6 +479,17 @@ inputs:
     required: false
     default: ''
 
+  dependency-track-project-tags:
+    description: |
+      Extra Dependency-Track project tags, comma-separated (e.g. "team:platform").
+      `repo:<name>` and `sbom:image` are always added: an image project is named
+      after the IMAGE, and a repo may build several (dunmir -> dunmir-agent,
+      -backend, -frontend), so the project name alone cannot say which repo produced
+      it. Only this workflow knows both, and a consumer grouping a repo's projects
+      needs that join key.
+    required: false
+    default: ''
+
   dependency-track-auto-create:
     description: |
       Create the Dependency-Track project/version on first upload. Default true
@@ -2529,6 +2540,9 @@ runs:
       shell: bash
       env:
         OWNER: ${{ github.repository_owner }}
+        # Derives the `repo:<name>` tag: an image is named after the IMAGE, so
+        # nothing downstream can tell which repo built it.
+        REPO_FULL: ${{ github.repository }}
         INPUT_IMAGE_NAME: ${{ steps.resolve-image.outputs.image_name }}
         STRATEGY: ${{ steps.resolve-image.outputs.strategy }}
         INPUT_REGISTRY: ${{ inputs.registry }}
@@ -2550,6 +2564,7 @@ runs:
         DEPENDENCY_TRACK_PROJECT_NAME: ${{ inputs.dependency-track-project-name }}
         DEPENDENCY_TRACK_PROJECT_VERSION: ${{ inputs.dependency-track-project-version }}
         DEPENDENCY_TRACK_AUTO_CREATE: ${{ inputs.dependency-track-auto-create }}
+        DEPENDENCY_TRACK_PROJECT_TAGS: ${{ inputs.dependency-track-project-tags }}
         DEFECTDOJO_URL: ${{ inputs.defectdojo-url }}
         DEFECTDOJO_API_KEY: ${{ inputs.defectdojo-api-key }}
         DEFECTDOJO_ENGAGEMENT: ${{ inputs.defectdojo-engagement }}
