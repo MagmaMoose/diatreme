@@ -32,6 +32,11 @@
 #
 # Optional env:
 #   AUTO_CREATE   - true | false. Create the project on first upload. Default true.
+#   PROJECT_TAGS  - comma-separated Dependency-Track project tags, e.g.
+#                   "repo:dunmir,sbom:image". The `repo:` tag is what lets a
+#                   downstream consumer group a repo's projects: an image is named
+#                   after the IMAGE (dunmir-agent), not the repo (dunmir), so a name
+#                   alone cannot say which repo built it. Only the workflow knows.
 #   DT_USER_AGENT - override the request User-Agent.
 #   STRICT        - true | false. Treat an upload error as fatal. Default false.
 #
@@ -163,6 +168,19 @@ echo "Dependency-Track: uploading image SBOM → project '${PROJECT_NAME}' @ '${
 # POST /api/v1/bom multipart with the BOM as a raw file part (no base64) — the
 # reverse-proxy-friendly upload path Chargate uses against the same servers.
 # autoCreate needs PROJECT_CREATION_UPLOAD on the API key.
+# projectTags is a repeated form field, one -F per tag. Empty/blank entries are
+# dropped rather than sent, because Dependency-Track will happily create a tag whose
+# name is the empty string and it is then awkward to remove.
+TAG_ARGS=()
+if [ -n "${PROJECT_TAGS:-}" ]; then
+  IFS=',' read -r -a _tags <<< "${PROJECT_TAGS}"
+  for _t in "${_tags[@]}"; do
+    _t="$(printf '%s' "${_t}" | tr -d '[:space:]')"
+    [ -n "${_t}" ] && TAG_ARGS+=(-F "projectTags=${_t}")
+  done
+  [ "${#TAG_ARGS[@]}" -gt 0 ] && echo "Dependency-Track: tagging project ${PROJECT_TAGS}"
+fi
+
 HTTP_CODE="$(curl -sS --config "${CURL_CFG}" -o "${BODY}" -w '%{http_code}' \
   -X POST "${ENDPOINT}" \
   -A "${USER_AGENT}" \
@@ -170,6 +188,7 @@ HTTP_CODE="$(curl -sS --config "${CURL_CFG}" -o "${BODY}" -w '%{http_code}' \
   -F "projectName=${PROJECT_NAME}" \
   -F "projectVersion=${PROJECT_VERSION}" \
   -F "autoCreate=${AUTO_CREATE}" \
+  "${TAG_ARGS[@]+"${TAG_ARGS[@]}"}" \
   -F "bom=@${UPLOAD_BOM};type=application/json" \
   2>"${ERR}" || true)"
 

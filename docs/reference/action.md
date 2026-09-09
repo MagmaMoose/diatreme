@@ -7,7 +7,7 @@ this page. For the task-shaped version, see [Using the action](../action.md).
 
 ## Action inputs
 
-`MagmaMoose/diatreme@v2` — all 90 inputs are optional.
+`MagmaMoose/diatreme@v2` — all 91 inputs are optional.
 
 | Input | Default | Description |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ this page. For the task-shaped version, see [Using the action](../action.md).
 | `dependency-track-api-key` | not set | Dependency-Track API key with BOM upload permission. Pass a workflow secret. |
 | `dependency-track-project-name` | not set | Dependency-Track project name. Defaults to the image repository path (e.g. owner/app). With multiple bake targets, the image leaf name is appended to keep the projects distinct. |
 | `dependency-track-project-version` | not set | Dependency-Track project version. Defaults to the released image tag (e.g. v1.2.3). |
+| `dependency-track-project-tags` | not set | Extra Dependency-Track project tags, comma-separated (e.g. "team:platform"). `repo:<name>` and `sbom:image` are always added: an image project is named after the IMAGE, and a repo may build several (dunmir -&gt; dunmir-agent, -backend, -frontend), so the project name alone cannot say which repo produced it. Only this workflow knows both, and a consumer grouping a repo's projects needs that join key. |
 | `dependency-track-auto-create` | `true` | Create the Dependency-Track project/version on first upload. Default true (the API key then needs PROJECT\_CREATION\_UPLOAD in addition to BOM\_UPLOAD). |
 | `defectdojo-url` | not set | DefectDojo base URL (e.g. `https://dd.example.com`). When set, the RELEASED image's Trivy findings report is imported (`mode: release` only, like the Dependency-Track sink). Empty disables the sink. Outages are non-blocking. Optional — the SBOM → Dependency-Track feed already yields component CVEs; this adds OS CVEs / misconfigs / secrets. |
 | `defectdojo-api-key` | not set | DefectDojo API v2 token. Pass a workflow secret. |
