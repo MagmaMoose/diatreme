@@ -105,6 +105,49 @@ if [ "$(head -c 3 "${BOM_FILE}" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
   UPLOAD_BOM="${STRIPPED}"
 fi
 
+# Dependency-Track rejects a CycloneDX spec it does not recognise outright:
+#
+#   HTTP 400 {"title":"The uploaded BOM is invalid","detail":"Unrecognized specVersion 1.7"}
+#
+# Trivy emits the newest spec its build knows and has NO flag to choose one, so a
+# routine Trivy bump silently outruns the server: 4.14.2 accepts up to 1.6, Trivy
+# 0.71 already writes 1.7. Every released image failed this way while the DefectDojo
+# half of the same scan imported fine, which is what made it look like a
+# Dependency-Track fault rather than a spec mismatch. The sink is failure-isolated,
+# so nothing went red — the projects were simply created empty and stayed that way.
+#
+# Relabel to the ceiling rather than pinning Trivy: a security scanner must stay
+# current, and its CycloneDX output has so far been backward-compatible in
+# substance (verified end to end against 4.14.2 — a relabelled Trivy BOM ingests
+# its components normally). Nothing is dropped or rewritten but the version claim;
+# if a future spec genuinely is incompatible the server rejects it exactly as it
+# does today, which is no worse than the status quo.
+#
+# Raise DT_MAX_CYCLONEDX_SPEC when the server learns a newer spec, and delete this
+# block once the floor supports whatever Trivy emits.
+DOWNGRADED=""
+DT_MAX_SPEC="${DT_MAX_CYCLONEDX_SPEC:-1.6}"
+BOM_SPEC="$(jq -r '.specVersion // empty' "${UPLOAD_BOM}" 2>/dev/null || true)"
+if [ -n "${BOM_SPEC}" ] && [ "${BOM_SPEC}" != "${DT_MAX_SPEC}" ] &&
+   [ "$(printf '%s\n%s\n' "${BOM_SPEC}" "${DT_MAX_SPEC}" | sort -V | tail -1)" != "${DT_MAX_SPEC}" ]; then
+  DOWNGRADED="$(mktemp)"
+  if jq -c --arg v "${DT_MAX_SPEC}" \
+       '.specVersion = $v
+        | if has("$schema")
+          then .["$schema"] = "https://cyclonedx.org/schema/bom-\($v).schema.json"
+          else . end' \
+       "${UPLOAD_BOM}" > "${DOWNGRADED}" 2>/dev/null && [ -s "${DOWNGRADED}" ]; then
+    echo "Dependency-Track: BOM declares CycloneDX ${BOM_SPEC}; the server accepts up to ${DT_MAX_SPEC} — relabelling for upload."
+    UPLOAD_BOM="${DOWNGRADED}"
+  else
+    # Leave it alone and let the server decide. A failed rewrite must not turn a
+    # possibly-acceptable BOM into no upload at all.
+    echo "::warning::Dependency-Track: could not relabel CycloneDX ${BOM_SPEC} to ${DT_MAX_SPEC}; uploading as-is."
+    rm -f "${DOWNGRADED}"
+    DOWNGRADED=""
+  fi
+fi
+
 BODY="$(mktemp)"
 ERR="$(mktemp)"
 # Keep the API key off curl's argv (it would be world-readable via the process
@@ -112,7 +155,7 @@ ERR="$(mktemp)"
 # --config file with 0600 perms instead.
 CURL_CFG="$(mktemp)"
 chmod 600 "${CURL_CFG}"
-trap 'rm -f "${BODY}" "${ERR}" "${CURL_CFG}" "${STRIPPED}"' EXIT
+trap 'rm -f "${BODY}" "${ERR}" "${CURL_CFG}" "${STRIPPED}" "${DOWNGRADED}"' EXIT
 printf 'header = "X-Api-Key: %s"\n' "${DEPENDENCY_TRACK_API_KEY}" > "${CURL_CFG}"
 
 echo "Dependency-Track: uploading image SBOM → project '${PROJECT_NAME}' @ '${PROJECT_VERSION}' (${ENDPOINT})"

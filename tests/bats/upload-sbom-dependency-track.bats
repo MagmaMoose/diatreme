@@ -154,3 +154,81 @@ teardown() {
   echo "$output" | grep -Fq "not https"
   grep -Eq 'curl .*-X POST http://dt.example.com/api/v1/bom' "${STUB_LOG}"
 }
+
+# ── CycloneDX spec ceiling ──────────────────────────────────────────────────
+# Dependency-Track rejects a spec it does not know outright ("Unrecognized
+# specVersion 1.7"), and Trivy emits the newest spec its build knows with no flag
+# to choose one. So a routine Trivy bump silently outruns the server: every
+# released image 400'd while the DefectDojo half of the same scan imported fine,
+# and because the sink is failure-isolated nothing went red — the projects were
+# created empty and stayed that way.
+
+_bom_spec() {
+  # The specVersion actually handed to curl. Matches compact or pretty JSON, and
+  # scans the whole log because a rewritten body may span lines.
+  grep -o '"specVersion"[[:space:]]*:[[:space:]]*"[^"]*"' "${STUB_LOG}" \
+    | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+}
+
+@test "a BOM newer than the server's ceiling is relabelled before upload" {
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.7","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(_bom_spec)" = "1.6" ]
+  echo "$output" | grep -Fq "relabelling for upload"
+}
+
+@test "the \$schema is relabelled with the specVersion, not left contradicting it" {
+  printf '{"$schema":"http://cyclonedx.org/schema/bom-1.7.schema.json","bomFormat":"CycloneDX","specVersion":"1.7","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq 'bom-1.6.schema.json' "${STUB_LOG}"
+  ! grep -Fq 'bom-1.7.schema.json' "${STUB_LOG}"
+}
+
+@test "a BOM at the ceiling is uploaded untouched" {
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.6","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(_bom_spec)" = "1.6" ]
+  ! echo "$output" | grep -Fq "relabelling"
+}
+
+@test "an OLDER BOM is never relabelled upward" {
+  # The server accepts everything up to the ceiling. Rewriting 1.4 to 1.6 would
+  # claim fields the document does not have, for no benefit.
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.4","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(_bom_spec)" = "1.4" ]
+}
+
+@test "the ceiling moves with DT_MAX_CYCLONEDX_SPEC, so a server upgrade needs no code change" {
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.7","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com DT_MAX_CYCLONEDX_SPEC=1.7 \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(_bom_spec)" = "1.7" ]
+  ! echo "$output" | grep -Fq "relabelling"
+}
+
+@test "version comparison is numeric, not lexical (1.10 is newer than 1.6)" {
+  # A string compare would call 1.10 older than 1.6 and upload it unchanged.
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.10","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(_bom_spec)" = "1.6" ]
+}
+
+@test "a BOM with no specVersion is uploaded as-is, not mangled" {
+  printf '{"bomFormat":"CycloneDX","components":[]}' > "${BOM}"
+  run env DEPENDENCY_TRACK_URL=https://dt.example.com \
+    DEPENDENCY_TRACK_API_KEY=dt-key BOM_FILE="${BOM}" PROJECT_NAME=a PROJECT_VERSION=v "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq 'formfile:bom:{"bomFormat":"CycloneDX","components":[]}' "${STUB_LOG}"
+}
