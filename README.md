@@ -101,7 +101,7 @@ All 90 inputs and every output →
 | [Setup](https://magmamoose.github.io/diatreme/setup/) | Install the App, wire the workflow, develop locally |
 | [Using the action](https://magmamoose.github.io/diatreme/action/) | Modes, Docker builds, image scanning, signing, publishing packages |
 | [Action reference](https://magmamoose.github.io/diatreme/reference/action/) | Every input and output, generated from `action.yml` |
-| [Architecture](https://magmamoose.github.io/diatreme/architecture/) · [Broker](https://magmamoose.github.io/diatreme/worker/) | How it works, and the Cloudflare Worker behind it |
+| [Architecture](https://magmamoose.github.io/diatreme/architecture/) · [Broker](https://magmamoose.github.io/diatreme/worker/) | How it works, and the hosted broker behind it |
 | [Errors](https://magmamoose.github.io/diatreme/reference/errors/) · [Limits](https://magmamoose.github.io/diatreme/reference/limits/) | What went wrong, and what it will not do |
 
 ## Where it sits
