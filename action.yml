@@ -943,8 +943,13 @@ inputs:
           ...) do not run for that release — the GitHub Release still
           comes from the deferred publish step. Promotion PRs ignore it
           (their version always comes from the promoted tag).
-        - gitversion: passed to gittools/actions@v4 as
-          `overrideConfig: increment=Major|Minor|Patch`.
+        - gitversion: GitVersion still runs, but the next version is derived
+          by bumping the latest stable tag at the requested level rather than
+          from GitVersion's computed `majorMinorPatch`. It is NOT passed as
+          `overrideConfig: increment=…`: that sets GitVersion's root
+          `increment` key, which a branch's own `increment` overrides, so a
+          config pinning `branches: main: increment: Patch` silently ignored
+          the forced bump and cut a patch anyway.
 
       Ignored by release-please — it has no clean equivalent and a
       forced bump would conflict with the tool's own logic. Wire your
@@ -965,6 +970,33 @@ inputs:
       Mutually exclusive with `force-bump`.
     required: false
     default: ''
+
+  release-branch-versioning:
+    description: |
+      On a stable branch, take the release version from the `release/X.Y.Z` or
+      `hotfix/X.Y.Z` branch named in HEAD's merge subject instead of inferring
+      it from commit messages.
+
+      Why this is on by default: in GitFlow the release branch name states the
+      version, but every versioning backend infers the bump from commit
+      messages, and that inference does not survive a squash merge. "Squash and
+      merge" collapses the branch's `feat:`/`fix:` commits into one commit whose
+      body is a bullet list, so the `^feat:` anchors stop matching and the tool
+      falls back to the trunk's default increment — a patch. `release/1.15.0`
+      then ships as `1.14.5`, every step green, and that mislabelled image is
+      what the cluster pulls.
+
+      Allowed values:
+        auto  (default) Derive the version when HEAD's subject names a
+              release/hotfix branch, the target environment is the stable one,
+              and the derived version is ahead of the latest released tag.
+              Otherwise the configured versioning tool decides, unchanged.
+        off   Never derive; the versioning tool always decides.
+
+      Skipped when `version-override` or `force-bump` is set — an explicit
+      instruction from the caller always outranks the branch name.
+    required: false
+    default: 'auto'
 
   # ── Version file injection (any tool) ─────────────────────────────────────
   version-file:
@@ -1678,15 +1710,94 @@ runs:
         ENVIRONMENTS: ${{ inputs.environments }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-release-actor.sh"
 
+    # ── The release version, decided once ────────────────────────────────────
+    #
+    # Two things can pin the version before any tool runs, and every step below
+    # gates on this one output rather than on either of them separately:
+    #
+    #   1. `version-override`, validated far above (it serves `mode: ci` too).
+    #   2. The `release/X.Y.Z` branch named in HEAD's merge subject.
+    #
+    # (2) exists because the branch name is the only statement of intent a
+    # squash merge cannot destroy. Squashing a release PR collapses its
+    # `feat:`/`fix:` commits into one bullet-list body, the commit-message
+    # heuristics stop matching, and the backend falls back to the trunk's
+    # default increment — `release/1.15.0` ships as `1.14.5`, green all the way
+    # down. `scripts/detect-release-branch-version.sh` carries the grammars and
+    # the guards; the guards that need workflow context live here.
+    - name: Resolve release version
+      id: release-version
+      if: inputs.mode == 'release'
+      shell: bash
+      env:
+        EXPLICIT_VERSION: ${{ steps.version-override.outputs.version }}
+        EXPLICIT_TAG: ${{ steps.version-override.outputs.tag }}
+        INPUT_RELEASE_BRANCH_VERSIONING: ${{ inputs.release-branch-versioning }}
+        INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
+        DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: |
+        set -euo pipefail
+
+        emit() {
+          echo "version=$1" >> "$GITHUB_OUTPUT"
+          echo "tag=$2"     >> "$GITHUB_OUTPUT"
+          echo "source=$3"  >> "$GITHUB_OUTPUT"
+        }
+
+        if [ -n "${EXPLICIT_VERSION}" ]; then
+          echo "Version pinned by version-override: ${EXPLICIT_VERSION}"
+          emit "${EXPLICIT_VERSION}" "${EXPLICIT_TAG}" "version-override"
+          exit 0
+        fi
+
+        if [ "${INPUT_RELEASE_BRANCH_VERSIONING}" != "auto" ]; then
+          echo "release-branch-versioning=${INPUT_RELEASE_BRANCH_VERSIONING}: leaving the version to the configured tool."
+          emit "" "" "tool"
+          exit 0
+        fi
+
+        # An explicit force-bump is the caller telling us the increment by
+        # hand; it outranks the branch name, and letting both through would
+        # trip the version-override/force-bump exclusivity error on what is a
+        # perfectly ordinary manual release.
+        if [ -n "${INPUT_FORCE_BUMP}" ]; then
+          echo "force-bump=${INPUT_FORCE_BUMP} is set; not deriving a version from the branch name."
+          emit "" "" "tool"
+          exit 0
+        fi
+
+        # Prerelease branches are excluded on purpose. GitFlow merges the
+        # release branch back into `develop` as well, and that merge subject
+        # names the same branch — deriving there would cut a stable-looking
+        # version on the integration line instead of the next `-dev.N`. On the
+        # release branch itself there is nothing to fix: the backends already
+        # read its name directly.
+        if [ "${DETECT_IS_PRERELEASE}" == "true" ]; then
+          echo "Prerelease environment; not deriving a version from the branch name."
+          emit "" "" "tool"
+          exit 0
+        fi
+
+        VERSION="$("${GITHUB_ACTION_PATH}/scripts/detect-release-branch-version.sh")"
+        if [ -z "${VERSION}" ]; then
+          emit "" "" "tool"
+          exit 0
+        fi
+
+        echo "::notice::Releasing ${TAG_PREFIX}${VERSION}, the version named by the release branch in HEAD's merge subject. Set release-branch-versioning: off to let the versioning tool decide instead."
+        emit "${VERSION}" "${TAG_PREFIX}${VERSION}" "release-branch"
+
     # Resolve the concrete versioning tool once, up front, so every tool step
     # below (and the normalize step) gates on a single detected value rather
     # than on the raw `versioning-tool` input. With `versioning-tool: auto`
     # (the default) this inspects `working-directory` for release-tooling
     # markers; with an explicit tool it validates and passes it through. Skipped
-    # when version-override is set, since that path bypasses versioning entirely.
+    # when the version is already pinned, since that path bypasses versioning
+    # entirely.
     - name: Resolve versioning tool
       id: resolve-tool
-      if: inputs.mode == 'release' && inputs.version-override == ''
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == ''
       shell: bash
       env:
         INPUT_VERSIONING_TOOL: ${{ inputs.versioning-tool }}
@@ -1711,7 +1822,7 @@ runs:
     # replaced.
     - name: Set up Python (semantic-release-python)
       id: psr-python
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'semantic-release-python'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'semantic-release-python'
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: '3.13'
@@ -1719,7 +1830,7 @@ runs:
 
     - name: Run python-semantic-release
       id: psr
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'semantic-release-python'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'semantic-release-python'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -1750,14 +1861,14 @@ runs:
       run: "${GITHUB_ACTION_PATH}/scripts/run-python-semantic-release.sh"
 
     - name: Set up Node.js (semantic-release-npm)
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'semantic-release-npm'
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: '20'
 
     - name: Run semantic-release (npm)
       id: semrel-npm
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'semantic-release-npm'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'semantic-release-npm'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -1912,14 +2023,14 @@ runs:
         fi
 
     - name: Install GitVersion
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'gitversion'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'gitversion'
       uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
       with:
         versionSpec: ${{ inputs.gitversion-spec }}
 
     - name: Execute GitVersion
       id: gitversion
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'gitversion'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'gitversion'
       uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
       with:
         # Resolved by the detect step rather than read from the raw input,
@@ -1935,36 +2046,44 @@ runs:
         # `working-directory`, else empty — which is what lets a repo resolved
         # from a bare *.csproj/*.sln run on GitVersion's built-in defaults.
         configFilePath: ${{ steps.resolve-tool.outputs.config }}
-        # GitVersion accepts /overrideconfig flags; map force-bump onto its
-        # `increment` knob. Empty force-bump leaves GitVersion's branch
-        # rules in charge. gittools/actions@v4 takes one key=value per
-        # line via overrideConfig (replaces the v0 additionalArguments
-        # /overrideconfig invocation that v4 no longer recognises).
-        overrideConfig: |
-          ${{
-            inputs.force-bump == 'major' && 'increment=Major' ||
-            inputs.force-bump == 'minor' && 'increment=Minor' ||
-            inputs.force-bump == 'patch' && 'increment=Patch' ||
-            ''
-          }}
+        # No `overrideConfig: increment=…` here on purpose — see the
+        # force-bump handling in `Create GitVersion release tag` below.
 
     - name: Create GitVersion release tag
       id: gitversion-tag
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'gitversion'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'gitversion'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
         DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
         DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
         INPUT_TAG_PREFIX: ${{ inputs.tag-prefix }}
+        INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
         GITVERSION_MAJOR_MINOR_PATCH: ${{ steps.gitversion.outputs.majorMinorPatch }}
       run: |
         set -euo pipefail
         IS_PRERELEASE="${DETECT_IS_PRERELEASE}"
         IDENTIFIER="${DETECT_IDENTIFIER}"
         PREFIX="${INPUT_TAG_PREFIX}"
+
+        BASE="${GITVERSION_MAJOR_MINOR_PATCH}"
+        if [ -n "${INPUT_FORCE_BUMP}" ]; then
+          # force-bump used to reach GitVersion as
+          # `overrideConfig: increment=Minor`, which sets the ROOT `increment`
+          # key — and the root key loses to the branch's own. A GitFlow config
+          # that pins `branches: main: increment: Patch` (the ordinary shape,
+          # and what GitVersion's own docs show) therefore swallowed the
+          # override whole and still cut a patch, silently: the operator asked
+          # for a minor release, watched every step go green, and got 1.14.6.
+          # So bump the latest stable tag here instead, exactly as the
+          # semantic-release paths do, and keep GitVersion out of a decision
+          # the caller has already made by hand.
+          BASE=$(FORCE_BUMP="${INPUT_FORCE_BUMP}" TAG_PREFIX="${PREFIX}" \
+            "${GITHUB_ACTION_PATH}/scripts/force-bump-version.sh")
+          echo "force-bump=${INPUT_FORCE_BUMP}: base ${BASE} (GitVersion computed ${GITVERSION_MAJOR_MINOR_PATCH})"
+        fi
+
         if [ "${IS_PRERELEASE}" == "true" ]; then
-          BASE="${GITVERSION_MAJOR_MINOR_PATCH}"
           LATEST=$(git tag -l "${PREFIX}${BASE}-${IDENTIFIER}.*" | sort -V | tail -1)
           if [ -z "${LATEST}" ]; then
             PRE_NUM=1
@@ -1974,7 +2093,7 @@ runs:
           fi
           VERSION="${BASE}-${IDENTIFIER}.${PRE_NUM}"
         else
-          VERSION="${GITVERSION_MAJOR_MINOR_PATCH}"
+          VERSION="${BASE}"
         fi
         TAG="${PREFIX}${VERSION}"
         echo "Creating tag: ${TAG}"
@@ -1990,14 +2109,17 @@ runs:
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
 
+    # Serves both pinned paths: an explicit `version-override` and a version
+    # read off the release branch. Neither ran a versioning tool, so the tag
+    # this step pushes is the only place the release gets cut.
     - name: Create version-override release tag
       id: version-override-tag
-      if: inputs.mode == 'release' && inputs.version-override != ''
+      if: inputs.mode == 'release' && steps.release-version.outputs.version != ''
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
-        OVERRIDE_VERSION: ${{ steps.version-override.outputs.version }}
-        OVERRIDE_TAG: ${{ steps.version-override.outputs.tag }}
+        OVERRIDE_VERSION: ${{ steps.release-version.outputs.version }}
+        OVERRIDE_TAG: ${{ steps.release-version.outputs.tag }}
       run: |
         set -euo pipefail
         VERSION="${OVERRIDE_VERSION}"
@@ -2014,7 +2136,7 @@ runs:
 
     - name: Run release-please
       id: release-please
-      if: inputs.mode == 'release' && inputs.version-override == '' && steps.resolve-tool.outputs.tool == 'release-please'
+      if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'release-please'
       uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
       with:
         token: ${{ steps.auth.outputs.token }}
@@ -2028,7 +2150,8 @@ runs:
       env:
         INPUT_TOOL: ${{ steps.resolve-tool.outputs.tool }}
         INPUT_PREFIX: ${{ inputs.tag-prefix }}
-        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        INPUT_VERSION_OVERRIDE: ${{ steps.release-version.outputs.version }}
+        VERSION_SOURCE: ${{ steps.release-version.outputs.source }}
         OVERRIDE_TAG_VERSION: ${{ steps.version-override-tag.outputs.version }}
         OVERRIDE_TAG_TAG: ${{ steps.version-override-tag.outputs.tag }}
         OVERRIDE_TAG_RELEASED: ${{ steps.version-override-tag.outputs.released }}
@@ -2108,7 +2231,11 @@ runs:
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
         echo "released=${RELEASED}" >> "$GITHUB_OUTPUT"
         echo "release_notes=${RELEASE_NOTES}" >> "$GITHUB_OUTPUT"
-        echo "Tool: ${TOOL} | Version: ${VERSION} | Tag: ${TAG} | Released: ${RELEASED}"
+        # A pinned version skips tool resolution entirely, so ${TOOL} is empty
+        # on those runs. Print what decided the number instead of a blank —
+        # "which of the three paths produced this tag" is the first question
+        # anyone asks when a release comes out under an unexpected version.
+        echo "Decided by: ${TOOL:-${VERSION_SOURCE:-unknown}} | Version: ${VERSION} | Tag: ${TAG} | Released: ${RELEASED}"
 
     # ═════════════════════════════════════════════════════════════════════════
     # RELEASE MODE — Persist version into tracked file(s) (any tool)
@@ -3130,8 +3257,8 @@ runs:
         # never happened. `release` mode already keys off `released`.
         BUILD_OUTCOME: ${{ steps.build-pr-image.outcome }}
         AUTO_MERGE_OUTCOME: ${{ steps.enable-auto-merge.outcome }}
-        VERSION: ${{ steps.normalize.outputs.version || steps.version-override.outputs.version }}
-        TAG: ${{ steps.normalize.outputs.tag || steps.version-override.outputs.tag }}
+        VERSION: ${{ steps.normalize.outputs.version || steps.release-version.outputs.version || steps.version-override.outputs.version }}
+        TAG: ${{ steps.normalize.outputs.tag || steps.release-version.outputs.tag || steps.version-override.outputs.tag }}
         ENVIRONMENT: ${{ steps.detect-env.outputs.environment }}
         IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
         RELEASED: ${{ steps.normalize.outputs.released }}
