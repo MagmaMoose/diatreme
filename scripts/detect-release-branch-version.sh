@@ -72,7 +72,7 @@ fi
 #    remote-tracking variant `Merge remote-tracking branch 'origin/release/1.15.0'`.
 if [ -z "${derived}" ] && [[ "${SUBJECT}" =~ ^Merge\ (remote-tracking\ )?branch\ \'([^\']+)\' ]]; then
   candidate="$(strip_owner "${BASH_REMATCH[2]}")"
-  [[ "${candidate}" =~ ${BRANCH_RE} ]] && derived="${BASH_REMATCH[2]}"
+  [[ "${candidate}" =~ ${BRANCH_RE} ]] && derived="${BASH_REMATCH[2]}" # group 2 of BRANCH_RE
 fi
 
 # 3. Squash merge: the subject is the PR title plus ` (#614)`, so there is no
