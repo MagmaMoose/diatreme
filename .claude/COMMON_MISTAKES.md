@@ -60,3 +60,23 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   a newer spec, and never "fix" this by pinning Trivy — a security scanner has to stay
   current. Note the same trap is latent in Chargate: it ships Syft, which still emits 1.6,
   so it will break identically the day Syft moves.
+
+- **A squash merge destroys every commit-message versioning heuristic.** "Squash and
+  merge" on a `release/1.15.0` PR collapses the branch's `feat:`/`fix:` commits into one
+  bullet-list body, the `^feat:` anchors stop matching, and the backend falls back to the
+  trunk's default increment — `1.15.0` ships as `1.14.5`, every step green, and that
+  mislabelled image is what the cluster pulls. `release-branch-versioning: auto` (default)
+  reads the version out of HEAD's merge subject instead; `scripts/detect-release-branch-version.sh`
+  holds the grammars. It fires only on a stable branch, only when the derived version is
+  ahead of the latest released tag, and never when `version-override` or `force-bump` is
+  set. Do not widen the free-text grammar to scan the commit *body*: PR descriptions live
+  there and routinely name a release branch, so a body scan re-pins the release to an
+  already-published version, and push-release-tag.sh then no-ops the whole release without
+  a single red step.
+- **GitVersion's root `increment` loses to a branch's own.** `force-bump` used to reach
+  GitVersion as `overrideConfig: increment=Minor`, which sets the root key. Any GitFlow
+  config pinning `branches: main: increment: Patch` (the ordinary shape) swallowed it whole
+  and still cut a patch, with no diagnostic: the operator asked for a minor release and got
+  `1.14.6`. force-bump now bypasses GitVersion and bumps the latest stable tag, like the
+  semantic-release paths. `tests/bats/action-input-defaults.bats` pins that the override is
+  gone.
