@@ -47,7 +47,7 @@ jobs:
     # SHA-pinned like every other managed reference. Caldrith's downgrade guard now
     # recognises reusable-workflow pins (MagmaMoose/caldrith#86); before that fix it could
     # not see this shape at all and would have fought Dependabot over it forever.
-    uses: MagmaMoose/tremvok/.github/workflows/docs.yml@1b49b1659f928ad7cb0c35a76b1e78a2fa16b3b7 # v1.0.7
+    uses: MagmaMoose/tremvok/.github/workflows/docs.yml@d465eaf3450664b51c4b75dd77a5466229f8312a # v1.0.10
     # The Cloudflare credentials are org secrets available to every repo.
     secrets: inherit
     with:
