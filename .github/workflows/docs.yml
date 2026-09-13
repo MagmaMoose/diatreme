@@ -47,7 +47,23 @@ jobs:
     # SHA-pinned like every other managed reference. Caldrith's downgrade guard now
     # recognises reusable-workflow pins (MagmaMoose/caldrith#86); before that fix it could
     # not see this shape at all and would have fought Dependabot over it forever.
-    uses: MagmaMoose/tremvok/.github/workflows/docs.yml@1b49b1659f928ad7cb0c35a76b1e78a2fa16b3b7 # v1.0.7
+    #
+    # THIS PIN ONLY PINS HALF OF IT, and that half is not the half that runs. The
+    # reusable workflow reaches the composite action as `uses: MagmaMoose/tremvok@v1`,
+    # a mutable tag, so the SHA below fixes the orchestration and `v1` decides the code.
+    # On 2026-09-10 `v1` was pointing at the v2 line, which renamed every docs input to a
+    # `pages-` prefix and dropped BOTH values this file can produce — `cloudflare-pages`
+    # and `none` — from `target`. So every repo in the fleet failed on every event, and
+    # the error named whichever half of `publish && 'cloudflare-pages' || 'none'` that
+    # event reached: `unknown target 'cloudflare-pages'` on a push, `unknown target
+    # 'none'` on a pull request. The job died before mkdocs was ever invoked, which is
+    # the part that mattered — a red check is noticed, a site that quietly stops
+    # rebuilding is not. Fixed upstream by retargeting `v1` (MagmaMoose/tremvok#28).
+    #
+    # So bumping this pin is worth doing and is not protection. The protection is `v1`
+    # never floating onto a breaking major again; `uses:` takes no expression, so a
+    # reusable workflow cannot pin itself and there is nothing to fix on this side.
+    uses: MagmaMoose/tremvok/.github/workflows/docs.yml@0abf8fb67dce4059024375b665d514162ed9b28b # v1.0.27
     # The Cloudflare credentials are org secrets available to every repo.
     secrets: inherit
     with:
