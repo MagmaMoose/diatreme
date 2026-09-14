@@ -530,6 +530,15 @@ EOF
   grep -Fq "oci://registry.example.com/acme/charts" "${STUB_LOG}"
 }
 
+@test "helm: fails with a clear message when package-name and owner are both absent" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 \
+    FEED_URL=oci://registry.example.com \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"repository owner is unknown"* ]]
+}
+
 @test "helm: the token never reaches argv" {
   mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
   run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
