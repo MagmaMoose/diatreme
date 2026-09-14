@@ -549,11 +549,13 @@ XML
     printf '%s' "${TOKEN}" | helm registry login "${REGISTRY}" \
       --username "${USERNAME:-x-access-token}" --password-stdin
 
+    shopt -s nullglob
     for chart in "${CHART_OUT}"/*.tgz; do
       echo "helm push '$(basename "${chart}")'"
       run_publish 'already exists|409|Conflict' \
         helm push "${chart}" "oci://${REGISTRY}/${REPO_PATH}"
     done
+    shopt -u nullglob
     ;;
 
   '')
