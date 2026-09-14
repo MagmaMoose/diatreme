@@ -574,6 +574,10 @@ inputs:
         gradle    JVM — `gradle publish` (project's maven-publish block).
         rubygems  Ruby — `gem build` + `gem push`.
         container OCI image — `docker build` + `docker push` (ghcr.io).
+        helm      Helm chart — `helm package` + `helm push` to an OCI registry.
+                  `package-path` is the chart directory; the chart's version AND
+                  appVersion are both set to the released version, so a chart can
+                  never ship pointing at the previous image.
         pip       Python — `python -m build` + `twine upload` (PyPI / any
                   index; not a GitHub Packages ecosystem, kept for convenience).
       All but pip are GitHub Packages ecosystems and default to this repo's
@@ -608,6 +612,7 @@ inputs:
         maven     The project dir or its pom.xml.
         gradle    The project dir (or a build.gradle(.kts) path).
         rubygems  The dir containing the .gemspec.
+        helm      The chart dir (the one with Chart.yaml).
         container The Docker build context (must contain a Dockerfile).
         pip       The source dir containing pyproject.toml/setup.py.
     required: false
@@ -627,6 +632,9 @@ inputs:
         maven     Maven repo URL. Default https://maven.pkg.github.com/<owner>/<repo>.
         gradle    Informational only — the repository is defined in build.gradle.
         rubygems  Gem host. Default https://rubygems.pkg.github.com/<owner>.
+        helm      OCI registry. Default ghcr.io; the repository path defaults to
+                  <owner>/charts and is lowercased for you, because OCI names
+                  must be lowercase and `github.repository_owner` is not.
         container Image registry host. Default ghcr.io; set this to publish to
                   another registry, e.g. an enterprise containers.HOSTNAME.
         pip       twine repository URL (--repository-url). Empty publishes to PyPI.

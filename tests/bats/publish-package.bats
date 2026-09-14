@@ -105,6 +105,21 @@ EOF
 
   export TOKEN="s3cr3t-token"
   unset STUB_NO_PKG || true
+  # helm stub: log every call; on `package`, drop a .tgz into --destination so
+  # the script's glob finds something to push.
+  cat > "${BIN}/helm" <<'EOF'
+#!/usr/bin/env bash
+echo "helm $*" >> "${STUB_LOG}"
+if [ "${1:-}" = "package" ]; then
+  dest=""
+  while [ $# -gt 0 ]; do [ "$1" = "--destination" ] && dest="${2:-}"; shift; done
+  [ -n "${dest}" ] && { mkdir -p "${dest}"; : > "${dest}/chart-0.0.0.tgz"; }
+fi
+if [ "${1:-}" = "registry" ]; then cat >/dev/null; fi
+exit 0
+EOF
+  chmod +x "${BIN}/helm"
+
 }
 
 teardown() {
@@ -462,4 +477,71 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"s3:GetObject"* ]] || [[ "$output" == *"s3:ListBucket"* ]]
   ! grep -q "put-object" "${STUB_LOG}"
+}
+
+
+# --- helm -------------------------------------------------------------------
+
+@test "helm: packages the chart dir and pushes to the derived ghcr charts repo" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.4.0 OWNER=MagmaMoose \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Eq 'helm package .*--version 1.4.0' "${STUB_LOG}"
+  grep -Fq "oci://ghcr.io/magmamoose/charts" "${STUB_LOG}"
+  grep -Fq "published=true" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: the OCI repository is lowercased" {
+  # OCI names must be lowercase and github.repository_owner keeps the account's
+  # display casing, so helm rejects it with "invalid reference: invalid
+  # repository" AFTER the image half of the release has already published.
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 PACKAGE_NAME=CalebSargeant/Charts \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "oci://ghcr.io/calebsargeant/charts" "${STUB_LOG}"
+  ! grep -Fq "CalebSargeant" "${STUB_LOG}"
+}
+
+@test "helm: version and appVersion are both the released version" {
+  # A chart whose appVersion lags its version ships the PREVIOUS image, and
+  # nothing surfaces that until the wrong code is already running.
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=2.1.0 OWNER=acme PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Eq 'helm package .*--version 2.1.0 .*--app-version 2.1.0' "${STUB_LOG}"
+}
+
+@test "helm: a directory with no Chart.yaml fails with a sentence" {
+  mkdir -p "${WORK}/notachart"
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    PACKAGE_PATH="${WORK}/notachart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no Chart.yaml"* ]]
+  ! grep -Fq "published=true" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: an explicit oci:// feed-url is accepted and normalised" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    FEED_URL=oci://registry.example.com PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "oci://registry.example.com/acme/charts" "${STUB_LOG}"
+}
+
+@test "helm: fails with a clear message when package-name and owner are both absent" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 \
+    FEED_URL=oci://registry.example.com \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"repository owner is unknown"* ]]
+}
+
+@test "helm: the token never reaches argv" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  ! grep -Fq "s3cr3t-token" "${STUB_LOG}"
 }
