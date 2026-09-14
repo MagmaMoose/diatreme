@@ -14,7 +14,7 @@
 # prerelease versions, prod runs publish stable versions, all on `released`.
 #
 # Required env:
-#   ECOSYSTEM   - nuget | pip | npm | maven | gradle | rubygems | container | s3
+#   ECOSYSTEM   - nuget | pip | npm | maven | gradle | rubygems | container | helm | s3
 #   VERSION     - semver to publish (e.g. 1.2.3 or 1.2.3-rc.1)
 #   TOKEN       - auth token / API key for the feed (not required for pip when
 #                 PYPI_TRUSTED_PUBLISHING=true — a token is minted via OIDC)
@@ -505,13 +505,64 @@ XML
       >/dev/null
     ;;
 
+  helm)
+    # Helm chart -> an OCI registry. `helm push` is the only supported path:
+    # the classic chartmuseum/index.yaml flow needs a server nobody runs any more.
+    : "${TOKEN:?TOKEN is required for helm publishing}"
+    REGISTRY="${FEED_URL:-ghcr.io}"
+    REGISTRY="${REGISTRY#oci://}"; REGISTRY="${REGISTRY#http://}"; REGISTRY="${REGISTRY#https://}"
+    REGISTRY="${REGISTRY%/}"
+
+    CHART_DIR="${TARGET:-${BASE_DIR}}"
+    [ -f "${CHART_DIR}" ] && CHART_DIR="$(dirname "${CHART_DIR}")"
+    if [ ! -f "${CHART_DIR}/Chart.yaml" ]; then
+      echo "::error::helm: no Chart.yaml in '${CHART_DIR}'. Point package-path at the chart directory."
+      exit 1
+    fi
+
+    # OCI repository names must be lowercase, and `github.repository_owner`
+    # preserves the account's display casing (e.g. CalebSargeant). helm rejects
+    # that outright with "invalid reference: invalid repository", AFTER the image
+    # half of a release has already published — a half-successful release that
+    # reads like a flake. Lowercase it here so no caller has to know.
+    REPO_PATH="${PACKAGE_NAME:-}"
+    if [ -z "${REPO_PATH}" ]; then
+      if [ -z "${OWNER_LOWER}" ]; then
+        echo "::error::helm: package-feed-url has no path and the repository owner is unknown; cannot derive an OCI target."
+        exit 1
+      fi
+      REPO_PATH="${OWNER_LOWER}/charts"
+    fi
+    REPO_PATH="$(printf '%s' "${REPO_PATH}" | tr '[:upper:]' '[:lower:]')"
+
+    CHART_OUT="$(mktemp -d)"
+    # --version AND --app-version: a chart whose appVersion lags its version ships
+    # the previous image, which is invisible until something is running the wrong
+    # code. Both come from the release, so they cannot drift.
+    echo "helm package '${CHART_DIR}' (version ${VERSION}) -> oci://${REGISTRY}/${REPO_PATH}"
+    helm package "${CHART_DIR}" \
+      --version "${VERSION}" \
+      --app-version "${VERSION}" \
+      --destination "${CHART_OUT}"
+
+    # Credentials over stdin, never argv.
+    printf '%s' "${TOKEN}" | helm registry login "${REGISTRY}" \
+      --username "${USERNAME:-x-access-token}" --password-stdin
+
+    for chart in "${CHART_OUT}"/*.tgz; do
+      echo "helm push '$(basename "${chart}")'"
+      run_publish 'already exists|409|Conflict' \
+        helm push "${chart}" "oci://${REGISTRY}/${REPO_PATH}"
+    done
+    ;;
+
   '')
-    echo "::error::publish-package is true but package-ecosystem is empty. Set package-ecosystem to nuget, pip, npm, maven, gradle, rubygems, container, or s3."
+    echo "::error::publish-package is true but package-ecosystem is empty. Set package-ecosystem to nuget, pip, npm, maven, gradle, rubygems, container, helm, or s3."
     exit 1
     ;;
 
   *)
-    echo "::error::Unsupported package-ecosystem '${ECOSYSTEM}'. Use nuget, pip, npm, maven, gradle, rubygems, container, or s3."
+    echo "::error::Unsupported package-ecosystem '${ECOSYSTEM}'. Use nuget, pip, npm, maven, gradle, rubygems, container, helm, or s3."
     exit 1
     ;;
 esac
