@@ -32,18 +32,26 @@ theme:
   name: material
   icon:
     repo: fontawesome/brands/github
+  # House type. `font` is a dict, so it merges safely with a repo's own theme.* keys
+  # (see the merge trap above) — unlike `extra_css`, which is a list and would need a
+  # self-hosted stylesheet path per repo before it could replace Google Fonts here.
+  # That is a separate step behind deciding where the woff2 bytes live; this alone
+  # stops Material's own default (Roboto / Roboto Mono from fonts.gstatic.com).
+  font:
+    text: Sora
+    code: IBM Plex Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: deep purple
-      accent: deep purple
+      primary: deep orange
+      accent: deep orange
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: deep purple
+      primary: deep orange
+      accent: deep orange
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
