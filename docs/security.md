@@ -42,10 +42,10 @@ redacted in the run log.
 ## Secret handling
 
 - The App private key, the bearer secret and the webhook secret live in the
-  platform's secret store. None are in the repository, and none appear in
-  `wrangler.jsonc`.
-- `.dev.vars` is gitignored. Only `.dev.vars.example`, with placeholders, is
-  tracked.
+  platform's secret store:
+  - **Python/Lambda broker**: AWS SSM Parameter Store and Lambda environment.
+  - **TypeScript Worker**: Cloudflare Secrets and environment (`.dev.vars` is
+    gitignored; only `.dev.vars.example` with placeholders is tracked).
 - The bearer on `/sign` and `/releases` is compared in constant time.
 - `/webhook` verifies an HMAC-SHA256 over the raw request body before parsing
   it, so an unsigned payload is never interpreted.
@@ -55,10 +55,11 @@ redacted in the run log.
 
 ## Attack surface kept deliberately small
 
-`workers_dev` and `preview_urls` are off. Either would expose a second publicly
-reachable hostname for a live token minter, inheriting production secrets and
-bypassing the rules bound to the custom domain. The custom domain is the only
-intended door.
+The TypeScript Cloudflare Worker implementation keeps `workers_dev` and `preview_urls`
+off in `wrangler.jsonc`. Either would expose a second publicly reachable hostname for
+a live token minter, inheriting production secrets and bypassing the rules bound to
+the custom domain. The custom domain is the only intended door. (The production Python
+Lambda broker has equivalent controls at the API Gateway layer.)
 
 Repository owner and name are validated against `A-Za-z0-9_.-` before they're
 interpolated into any API URL.

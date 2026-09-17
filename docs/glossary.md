@@ -16,9 +16,10 @@ an OIDC token at the broker. `github-token` uses a token you supply.
 **Broker.** The hosted GitHub App backend the action calls. Serves `/token`,
 `/sign`, `/releases` and `/webhook`. Also called the token broker.
 
-**Broker surface.** Diatreme's other half: the code behind the broker. Currently
-the TypeScript Cloudflare Worker in `worker/` as the code of record, with the
-running deployment on AWS Lambda.
+**Broker surface.** Diatreme's other half: the code behind the broker. The
+production deployment is the Python/Lambda broker in `broker/` running on AWS
+Lambda. The TypeScript Cloudflare Worker in `worker/` serves as the code of
+record and rollback target, but is not currently serving any hostname.
 
 **Fallback broker.** The secondary hostname the action retries when the primary
 is unreachable or returns 5xx. Never tried on 4xx, because a rejected token is
