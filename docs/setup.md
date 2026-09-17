@@ -73,8 +73,8 @@ git update-index --chmod=+x scripts/<new-script>.sh
 **Python broker** (`broker/`):
 
 ```bash
-pip install -r broker/requirements.txt
-pytest broker/tests
+pip install -r requirements-dev.txt
+pytest tests
 ```
 
 **TypeScript Worker** (`worker/`) — the rollback target, kept deployable but not serving traffic:

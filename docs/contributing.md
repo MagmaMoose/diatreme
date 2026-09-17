@@ -34,7 +34,7 @@ Broker surface:
 
 - Python broker (`broker/`):
   ```bash
-  pip install -r broker/requirements.txt && pytest broker/tests
+  pip install -r requirements-dev.txt && pytest tests
   ```
 - TypeScript Worker rollback target (`cd worker/`):
   ```bash
