@@ -30,11 +30,16 @@ shellcheck -S warning scripts/*.sh
 bats tests/bats
 ```
 
-Worker surface (`cd worker/`):
+Broker surface:
 
-```bash
-npm ci && npm run check   # typecheck + vitest + wrangler dry-run
-```
+- Python broker (`broker/`):
+  ```bash
+  pip install -r broker/requirements.txt && pytest broker/tests
+  ```
+- TypeScript Worker rollback target (`cd worker/`):
+  ```bash
+  npm ci && npm run check   # typecheck + vitest + wrangler dry-run
+  ```
 
 ## CI gates
 

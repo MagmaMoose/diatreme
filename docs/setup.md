@@ -14,7 +14,7 @@ Pin to the floating major tag:
 ### Required permissions
 
 The default `auth-mode: public-app` exchanges an Actions OIDC token for a
-short-lived GitHub App installation token through the hosted worker, so the job
+short-lived GitHub App installation token through the hosted broker, so the job
 needs:
 
 ```yaml
@@ -68,7 +68,16 @@ New shell scripts must be executable in Git (`core.fileMode` is off here):
 git update-index --chmod=+x scripts/<new-script>.sh
 ```
 
-### Worker surface (`cd worker/`)
+### Broker surface
+
+**Python broker** (`broker/`):
+
+```bash
+pip install -r broker/requirements.txt
+pytest broker/tests
+```
+
+**TypeScript Worker** (`worker/`) — the rollback target, kept deployable but not serving traffic:
 
 ```bash
 npm ci

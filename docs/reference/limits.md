@@ -2,8 +2,9 @@
 
 <!-- sources: broker/app, worker/src/index.ts -->
 
-Caps, timeouts and TTLs built into the broker. None of these are configurable
-per request. They're here so you can tell a limit from a bug.
+Caps, timeouts and TTLs built into both broker implementations (Python/Lambda and
+TypeScript/Cloudflare Worker). None of these are configurable per request. They're
+here so you can tell a limit from a bug.
 
 ## Token lifetimes
 
@@ -27,7 +28,7 @@ The key sets used to verify OIDC tokens.
 | Throttle between unmatched-key reloads | 30 seconds |
 | Minimum interval between forced reloads | 5 seconds |
 | Last-known-good snapshot is usable for | 24 hours |
-| Snapshot is retained in KV for | 30 days |
+| Snapshot retention (Cloudflare Worker only) | 30 days |
 
 A token whose `kid` isn't in the cached set triggers one forced re-fetch, rate
 limited to once every 5 seconds across the whole broker. That's what recovers

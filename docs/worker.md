@@ -1,37 +1,35 @@
 # The broker
 
-<!-- sources: worker/src/index.ts, worker/wrangler.jsonc, worker/README.md -->
+<!-- sources: broker/app, worker/src/index.ts -->
 
 The GitHub App backend behind `https://api.diatreme.magmamoose.com`. It exists so
 callers don't have to register and run their own GitHub App: the action's default
 `auth-mode: public-app` exchanges an Actions OIDC token here for a short-lived
 installation token.
 
-This page explains how the implementation works and how to run it. The exhaustive
-tables live elsewhere so they can't drift apart:
+## Active implementation
+
+The production broker is a **Python/Lambda implementation** (`broker/app/`) running on
+AWS Lambda behind API Gateway in `eu-west-1`. The **TypeScript Cloudflare Worker**
+(`worker/src/index.ts`) remains in this repository as the code-of-record reference and
+rollback target, but is not currently serving any hostname.
+
+The two implementations use the same verification ladder and error contract, so the
+wire protocol is identical. For operations and deployment details, see
+[Deployment](operations/deployment.md).
+
+This page explains the shared broker concepts. The exhaustive tables live elsewhere
+so they can't drift apart:
 
 - [Broker API](reference/broker-api.md): every route, parameter and status code.
 - [Broker configuration](reference/configuration.md): every variable.
 - [Errors](reference/errors.md): every failure and its fix.
 - [Limits](reference/limits.md): caps, TTLs and lifetimes.
 
-!!! warning "This code is not what serves production today"
-    Both broker hostnames answer from AWS Lambda. `worker/` is the code of
-    record in this repository, what CI validates, and the rollback target, but a
-    change merged here does not reach consumers. See
-    [Deployment](operations/deployment.md).
+## Verification ladder
 
-## Shape of the implementation
-
-`worker/src/index.ts` is a single file exporting `default { fetch }`. Its only
-runtime dependency is [`jose`](https://github.com/panva/jose), which keeps the
-attack surface and the cold start small. Requests are routed by an exact
-pathname switch, and anything unmatched is `404 not_found`.
-
-Four routes: `/token`, `/sign`, `/releases`, `/webhook`. Only `/token` is on the
-path of a normal release.
-
-Verification order for `/token` matters and is deliberate:
+Both broker implementations (Python/Lambda and TypeScript/Cloudflare Worker) follow
+the same verification order for `/token`, which is load-bearing:
 
 1. Parse the body. Missing fields fail before any crypto runs.
 2. Verify the OIDC token against the pinned issuer's key set.
@@ -43,6 +41,8 @@ Steps 3 and 4 come after verification because an unverified claim is worth
 nothing. Step 5 is what makes GitHub Enterprise work: a token from a configured
 GHE issuer mints through the GHE App against that tenant's REST base, and a
 github.com token never does.
+
+The full ladder and every status code is in [Broker API](reference/broker-api.md).
 
 ## Surviving a JWKS outage
 
@@ -71,7 +71,23 @@ and your token lost. A 503 says it never reached one. Collapsing the two turned
 an upstream outage into a permanent, unfalsifiable "bad token"
 ([#147](https://github.com/MagmaMoose/diatreme/issues/147)).
 
-## Develop
+## Development and deployment
+
+Both broker implementations are kept in sync by their test suites:
+
+- **Python broker** (`broker/app/`) is production. Runs on AWS Lambda. Configuration
+  via SSM Parameter Store and Lambda environment. Smoke-tested weekly against both
+  broker hostnames.
+- **TypeScript Worker** (`worker/src/index.ts`) is the rollback target and code
+  reference. Kept deployable but not serving traffic.
+
+Full deployment pipeline, secrets, rollback procedure, and smoke testing are in
+[Deployment](operations/deployment.md). Configuration options are documented in
+[Broker configuration](reference/configuration.md).
+
+### Running locally (TypeScript Worker)
+
+If you need to verify the Worker locally:
 
 ```bash
 cd worker
@@ -82,27 +98,6 @@ npm run check       # typecheck + tests + wrangler dry run
 wrangler dev        # run locally against .dev.vars
 ```
 
-Copy `worker/.dev.vars.example` to `worker/.dev.vars` (gitignored) and fill in
-the App credentials.
-
-The test suite covers the router and the two hard parts separately:
-`test/index.test.ts` for routing and handlers, `test/verify-oidc.test.ts` for the
-verification ladder, and `test/jwks-rotation.test.ts` for rotation and snapshot
-rescue.
-
-## Deploy
-
-Pushes to `main` touching `worker/**` deploy automatically. Full pipeline,
-required secrets, rollback and the end-to-end smoke test are in
-[Deployment](operations/deployment.md).
-
-## Read the logs
-
-```bash
-npx wrangler tail diatreme --format json --search oidc_verify_failed
-```
-
-One structured line per verification failure, carrying the classified reason,
-the underlying error code, the token's claims and the values the broker
-expected. Never the token itself. See
-[Errors](reference/errors.md#getting-more-detail).
+Copy `worker/.dev.vars.example` to `worker/.dev.vars` and fill in the App
+credentials. The test suite covers routing, verification, and JWKS rotation
+separately.
