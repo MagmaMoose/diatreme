@@ -2,7 +2,6 @@ site_name: Diatreme
 site_description: >-
   Release and deployment orchestration: a GitHub Marketplace composite action
   plus the hosted GitHub App broker that backs it.
-site_url: https://magmamoose.github.io/diatreme/
 repo_url: https://github.com/MagmaMoose/diatreme
 repo_name: MagmaMoose/diatreme
 docs_dir: docs
