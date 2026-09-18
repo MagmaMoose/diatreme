@@ -33,10 +33,13 @@ bats tests/bats
 Broker surface:
 
 - Python broker (`broker/`):
+
   ```bash
   pip install -r requirements-dev.txt && pytest tests
   ```
+
 - TypeScript Worker rollback target (`cd worker/`):
+
   ```bash
   npm ci && npm run check   # typecheck + vitest + wrangler dry-run
   ```
