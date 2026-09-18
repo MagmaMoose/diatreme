@@ -96,7 +96,7 @@ jobs:
       # The v1 incident this file used to carry a paragraph about is worth keeping one
       # sentence of: `uses:` on a mutable major tag is how every repo in the fleet broke at
       # once when `v1` was retargeted onto a breaking line. The pin is the protection.
-      - uses: MagmaMoose/tremvok@e0f6c558c673b7b47df5d8bf14f69f5f5d8ff398 # v2.4.2
+      - uses: MagmaMoose/tremvok@c1118254fb0f55e0ea74af86d476b64a1aea5176 # v2.6.1
         with:
           target: cloudflare-docs
           # The step above already checked out; a second one would be wasted work.
