@@ -1,0 +1,43 @@
+# One repository's documentation site, as a Worker with Static Assets.
+#
+# Provisioned by Caldrith from MagmaMoose/admin (files/docs-site/wrangler.toml). Edit it
+# THERE, not here; a local edit is reconciled away on the next run.
+#
+# It lives at `.docs-site/` rather than the repository root for one reason that decides it:
+# a root `wrangler.toml` is the obvious place and it is already taken in repos that ship a
+# Worker of their own (dunmir has one today, and it would be silently replaced). A fixed
+# subdirectory is the same path in every repo, so `cloudflare-config` in the provisioned
+# docs workflow is one value and not a per-repo override waiting to be forgotten.
+#
+# Wrangler resolves relative paths against the CONFIG FILE's directory, not the working
+# directory, which is why `main` is a bare filename and the assets directory climbs out.
+#
+# NO ROUTES AND NO workers.dev URL, on purpose. This Worker is not reachable over HTTP at
+# all: the only way in is the docs router's service binding on docs.magmamoose.com. That is
+# what makes the Access application on that hostname a gate on the person rather than a gate
+# the router holds a token past (ADR-0005). A public origin here would be the hole in it.
+
+name = "docs-diatreme"
+
+# There IS a script, and an assets-only Worker would be cheaper. A service binding
+# dispatches to a Worker's fetch handler, and `main` is what gives this one. Without it the
+# router has nothing to call. The cost is honest: every asset request is a Worker
+# invocation, which is the price of one hostname shared by path.
+main = "index.js"
+
+compatibility_date = "2026-09-15"
+workers_dev = false
+
+[assets]
+# The MkDocs build output, one level up from this file. `target: cloudflare-docs` refuses to
+# publish this directory empty — publishing nothing over a site that is currently serving
+# SUCCEEDS, which is the failure worth refusing.
+directory = "../site"
+
+# Without `binding` there is no `env.ASSETS`, and a Worker with `main` set answers every
+# request from the script — which here would have nothing to serve.
+binding = "ASSETS"
+
+# MkDocs emits a 404.html. `404-page` serves it with a 404 status; the default would hand
+# the request back to the script, which would loop.
+not_found_handling = "404-page"

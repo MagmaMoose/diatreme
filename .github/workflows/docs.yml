@@ -1,22 +1,54 @@
-# Org docs site — build strictly, publish to Cloudflare Pages, verify it serves.
+# Org docs site — build strictly, publish to Cloudflare Workers Static Assets behind the
+# docs router, and hand the search corpus to the documentation MCP.
 #
 # Provisioned by Caldrith from MagmaMoose/admin (files/workflows/docs.yml). Edit it
 # THERE, not here; a local edit is reconciled away on the next run.
 #
-# Cloudflare rather than GitHub Pages, for one reason that decides it: on the Team plan a
-# Pages site built from a PRIVATE repo is still served on the open internet (private
-# publishing is an Enterprise Cloud feature). Half this fleet is private and two repos are
-# proprietary, so GitHub Pages cannot host them at all without leaking them. Cloudflare
-# Access gates them properly, and using one target for every repo means one code path
-# rather than a permanent split maintained for a handful of repos.
+# ── WHY THIS IS A DIRECT ACTION CALL AND NO LONGER A REUSABLE WORKFLOW ──────
 #
-# `docs.yml` is the CLOUDFLARE workflow — there is no `target:` input, because the host is
-# what picks the workflow. `docs-github-pages.yml` is the other one, and it needs
-# `pages: write` + `id-token: write` from its caller. Passing an input a reusable workflow
-# does not declare is a startup failure, not a warning.
+# It used to call `MagmaMoose/tremvok/.github/workflows/docs.yml`, pinned at v1.0.27,
+# which deployed to Cloudflare Pages. The v2 line DELETED that file along with
+# `target: cloudflare-pages`, so there is nothing left to call and a caller invokes the
+# composite action itself. One job, where the reusable workflow had two.
 #
-# Everything below is one call. Toolchain (uv vs pip), the Pages project name, and project
-# creation on first deploy are all handled inside the action.
+# ADR-0005 (MagmaMoose/nievah, docs/adr/0005-docs-sites-and-mcp-surfaces.md) is why it had
+# to move rather than sit on a maintained v1: index publishing exists ONLY on the
+# `cloudflare-docs` target. Every repository in this list was contributing nothing to the
+# fleet's documentation corpus — `mcp.magmamoose.com` answered every query with "0
+# document(s) across 0 repository(ies)" — because the workflow that builds the docs had no
+# way to express the step that publishes them. The step was never missing from the action;
+# it was unreachable from here.
+#
+# ── THE THREE INPUTS THAT CARRY THE DESIGN ─────────────────────────────────
+#
+# `cloudflare-docs-host` — the site Worker has NO route and NO workers.dev URL. It is
+# reachable only through the router's service binding on docs.magmamoose.com, which is what
+# makes the Access application on that hostname a gate on the PERSON rather than something
+# the router holds a token past. So the host is not this Worker's address; it is the address
+# the Access check asks about, the address the run reports, and the address every citation
+# in the corpus is built from.
+#
+# `cloudflare-docs-index-bucket` — the shared R2 corpus, written as `index/<repo>.json` by
+# the build that has just rendered every page. EMPTY IS THE DEFAULT and empty publishes
+# nothing, which is precisely the state the whole fleet was in for as long as nobody set it.
+# Naming it here is the one line that turns a docs site into something an agent can read.
+#
+# `cloudflare-docs-require-access` — the private-docs gate, carried over unchanged from the
+# Pages target. It makes the deploy ask Cloudflare which Access applications exist and
+# REFUSE to publish when nothing covers the site. ADR-0005 names surviving this migration as
+# a hard requirement, because it is enforcement rather than convention: a private repo whose
+# gate quietly stopped being checked publishes proprietary internals and nothing says so.
+# A repo with it on stays red until someone creates that application by hand in the
+# Cloudflare dashboard — see `docs_require_access` in .github/settings.yml. That is the
+# intended trade.
+#
+# ── ORDERING, WHICH IS THE ONE THING THAT BITES ────────────────────────────
+#
+# `.docs-site/wrangler.toml` is provisioned by the same settings.yml entry list and is what
+# `--config` points at. It is IN the path filter below on purpose: these two files arrive in
+# separate commits, so if only the workflow triggered a run, the reconcile that lands the
+# workflow first would fail on a config that does not exist yet and nothing would re-run it.
+# With both watched, whichever lands second re-runs the job against a complete pair.
 name: Docs
 
 on:
@@ -28,6 +60,7 @@ on:
       - 'mkdocs.base.yml'
       - 'README.md'
       - '.markdownlint.jsonc'
+      - '.docs-site/**'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -36,43 +69,53 @@ on:
       - 'mkdocs.base.yml'
       - 'README.md'
       - '.markdownlint.jsonc'
+      - '.docs-site/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
+# `contents: read` and no more. The action's sticky pull-request comment is the only thing
+# here that would need `pull-requests: write`, and it is turned off below: nine repositories
+# gaining a bot comment on every docs pull request is not what this change is for.
 permissions:
   contents: read
 
+concurrency:
+  group: docs-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   docs:
-    # SHA-pinned like every other managed reference. Caldrith's downgrade guard now
-    # recognises reusable-workflow pins (MagmaMoose/caldrith#86); before that fix it could
-    # not see this shape at all and would have fought Dependabot over it forever.
-    #
-    # THIS PIN ONLY PINS HALF OF IT, and that half is not the half that runs. The
-    # reusable workflow reaches the composite action as `uses: MagmaMoose/tremvok@v1`,
-    # a mutable tag, so the SHA below fixes the orchestration and `v1` decides the code.
-    # On 2026-09-10 `v1` was pointing at the v2 line, which renamed every docs input to a
-    # `pages-` prefix and dropped BOTH values this file can produce — `cloudflare-pages`
-    # and `none` — from `target`. So every repo in the fleet failed on every event, and
-    # the error named whichever half of `publish && 'cloudflare-pages' || 'none'` that
-    # event reached: `unknown target 'cloudflare-pages'` on a push, `unknown target
-    # 'none'` on a pull request. The job died before mkdocs was ever invoked, which is
-    # the part that mattered — a red check is noticed, a site that quietly stops
-    # rebuilding is not. Fixed upstream by retargeting `v1` (MagmaMoose/tremvok#28).
-    #
-    # So bumping this pin is worth doing and is not protection. The protection is `v1`
-    # never floating onto a breaking major again; `uses:` takes no expression, so a
-    # reusable workflow cannot pin itself and there is nothing to fix on this side.
-    uses: MagmaMoose/tremvok/.github/workflows/docs.yml@0abf8fb67dce4059024375b665d514162ed9b28b # v1.0.27
-    # The Cloudflare credentials are org secrets available to every repo.
-    secrets: inherit
-    with:
-      runs-on: ubuntu-latest
-      # A pull request builds, lints and checks, but never deploys.
-      publish: ${{ github.event_name != 'pull_request' }}
-      # ENFORCED, not remembered. A Cloudflare Pages project is served on the open
-      # internet at <project>.pages.dev by default, so "the repo is private" gates
-      # nothing. With this set the action asks Cloudflare which Access applications
-      # exist and REFUSES to deploy unless one covers the hostname — so a private repo
-      # cannot publish before it is gated, whatever anyone forgets to configure.
-      require-access: False
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # SHA-pinned, with the tag in the comment, like every other managed reference.
+      # Caldrith's downgrade guard understands this shape and Dependabot bumps it.
+      #
+      # The v1 incident this file used to carry a paragraph about is worth keeping one
+      # sentence of: `uses:` on a mutable major tag is how every repo in the fleet broke at
+      # once when `v1` was retargeted onto a breaking line. The pin is the protection.
+      - uses: MagmaMoose/tremvok@e0f6c558c673b7b47df5d8bf14f69f5f5d8ff398 # v2.4.2
+        with:
+          target: cloudflare-docs
+          # The step above already checked out; a second one would be wasted work.
+          checkout: 'false'
+          # `auto`: a push to the default branch deploys, a pull request is a preview.
+          # There is no preview DESTINATION for these Workers — no route, no workers.dev —
+          # so a pull request builds strictly, lints, emits the corpus and publishes
+          # neither the site nor the index. The build is the check.
+          mode: auto
+          # The site Worker's config: name, `[assets]`, and deliberately no route. Provisioned
+          # beside this file, not written per repo.
+          cloudflare-config: .docs-site/wrangler.toml
+          cloudflare-docs-host: docs.magmamoose.com
+          cloudflare-docs-index-bucket: magmamoose-docs-index
+          cloudflare-docs-require-access: 'False'
+          # Off, so `permissions:` above can stay at `contents: read`.
+          pr-comment: 'false'
+          # Org secrets, available to every repo in the org. The token is the "Edit
+          # Cloudflare Workers" one, which carries Workers R2 Storage Edit — the permission
+          # `wrangler r2 object put` needs to write the corpus.
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
