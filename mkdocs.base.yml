@@ -166,3 +166,18 @@ extra:
       same_as:
         - https://github.com/MagmaMoose
         - https://www.linkedin.com/company/magmamoose
+
+  # ── Agent readiness ────────────────────────────────────────────────────────
+  #
+  # Read by tremvok's agent-ready step (v2.12.0 and later; docs/agent-readiness.md there),
+  # which gives each site an Agent Skills index and skill, WebMCP tools on every page and,
+  # at the root of a host, an auth.md. Everything defaults from site_name and
+  # site_description except the one fleet fact: where the MCP server is, so a site's skill
+  # can send an agent to search every docs site at once rather than scrape this one.
+  #
+  # The public server only indexes public repositories. A repo with
+  # `docs_require_access: true` publishes nothing today; when it does, its own mkdocs.yml
+  # should set `extra.agents.mcp` to https://mcp.magmamoose.com/private (a dict key in the
+  # child wins over this one), or its skill will point at a server that cannot see it.
+  agents:
+    mcp: https://mcp.magmamoose.com/
