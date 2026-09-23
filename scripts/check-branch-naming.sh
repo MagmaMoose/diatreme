@@ -9,7 +9,14 @@ PROMOTE_PREFIX="${PROMOTE_BRANCH_PREFIX:-promote}"
 # names sane, not to police a minimal Conventional-Commit set, so the default
 # leans permissive. Repos that need more can widen it without editing this
 # script via EXTRA_BRANCH_PREFIXES (action input `extra-branch-prefixes`).
-default_prefixes="feat|fix|chore|hotfix|docs|refactor|perf|test|ci|style|build|revert|deploy|release"
+#
+# claude/ and codex/ are the branch names coding agents create for themselves,
+# and they are here as TYPES rather than in the bot bypass below on purpose.
+# The bypass exists for branches that cannot be named (dependabot encodes an
+# ecosystem and a version in its ref); an agent branch is an ordinary
+# <type>/<description> and the rest of the rule should still hold for it. A
+# bypass would also accept `claude` with no slash at all.
+default_prefixes="feat|fix|chore|hotfix|docs|refactor|perf|test|ci|style|build|revert|deploy|release|claude|codex"
 
 # EXTRA_BRANCH_PREFIXES accepts a comma-, space-, or pipe-separated list.
 # Normalise any of those separators to a single `|` and trim empties so the

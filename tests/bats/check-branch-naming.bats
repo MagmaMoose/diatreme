@@ -13,10 +13,30 @@ setup() {
 }
 
 @test "accepts every documented TBD type prefix" {
-  for prefix in feat fix chore hotfix docs refactor perf test ci style build revert deploy release; do
+  for prefix in feat fix chore hotfix docs refactor perf test ci style build revert deploy release claude codex; do
     run env GITHUB_HEAD_REF="${prefix}/some-change" "${SCRIPT}"
     [ "$status" -eq 0 ]
   done
+}
+
+@test "accepts coding-agent branches without any extra configuration" {
+  # The branch names Claude Code and Codex generate. Every repo consuming this
+  # action gets one the moment an agent opens a PR, so they pass out of the box
+  # rather than each repo rediscovering extra-branch-prefixes.
+  run env GITHUB_HEAD_REF="claude/fix-the-thing-a1b2c3" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"follows TBD naming convention"* ]]
+
+  run env GITHUB_HEAD_REF="codex/fix-the-thing" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+}
+
+@test "agent prefixes are types, not a bypass" {
+  # Accepted as a TBD type, so the <type>/<description> shape still applies:
+  # a bare `claude` with nothing after it is not a branch name.
+  run env GITHUB_HEAD_REF="claude" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not follow TBD naming convention"* ]]
 }
 
 @test "accepts default promote/ prefix" {
