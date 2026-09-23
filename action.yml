@@ -577,7 +577,9 @@ inputs:
         helm      Helm chart — `helm package` + `helm push` to an OCI registry.
                   `package-path` is the chart directory; the chart's version AND
                   appVersion are both set to the released version, so a chart can
-                  never ship pointing at the previous image.
+                  never ship pointing at the previous image (`helm-app-version`
+                  changes what appVersion carries). `helm-lint`, `helm-sign` and
+                  the `artifacthub-*` inputs make it a public, signed chart.
         pip       Python — `python -m build` + `twine upload` (PyPI / any
                   index; not a GitHub Packages ecosystem, kept for convenience).
       All but pip are GitHub Packages ecosystems and default to this repo's
@@ -709,8 +711,10 @@ inputs:
     description: |
       Image name for `package-ecosystem: container`, published as
       `<package-feed-url|ghcr.io>/<package-name>:<version>`. Defaults to the
-      repository (owner/repo) lowercased. Ignored by the other ecosystems,
-      which take their name from the project manifest.
+      repository (owner/repo) lowercased. For `package-ecosystem: helm` it is
+      the OCI repository path the chart is pushed under, default
+      `<owner>/charts`. Ignored by the other ecosystems, which take their name
+      from the project manifest.
     required: false
     default: ''
 
@@ -738,6 +742,83 @@ inputs:
       package-ecosystem is pip.
     required: false
     default: 'false'
+
+  # ── Helm charts (package-ecosystem: helm) ─────────────────────────────────
+  # What a PUBLIC chart needs beyond `helm push`: a lint gate, an appVersion that
+  # names the image tag this release actually pushed, a signature, and the
+  # Artifact Hub metadata and listing. All off by default, so an existing helm
+  # publisher is unaffected. Every input here is ignored for other ecosystems.
+  helm-app-version:
+    description: |
+      What the chart's `appVersion` is set to. The chart's `version` is always
+      the released version. One of:
+        version  (default) The released version, e.g. 1.4.0.
+        tag      The release tag, e.g. v1.4.0: the tag image promotion pushes.
+                 Use it when the chart's default image tag is `.Chart.AppVersion`
+                 and `tag-prefix` is not empty, or the published chart points at
+                 an image tag that does not exist.
+        chart    Keep the appVersion committed in Chart.yaml, for a chart that
+                 packages an image this repository does not build.
+    required: false
+    default: 'version'
+
+  helm-lint:
+    description: |
+      When true, `helm lint` the chart before packaging it and publish nothing
+      if it fails.
+    required: false
+    default: 'false'
+
+  helm-sign:
+    description: |
+      When true, sign the pushed chart with cosign (keyless / Sigstore) by
+      immutable digest, which Artifact Hub shows as a signed chart. Requires
+      `id-token: write` on the job (the default `auth-mode: public-app` already
+      grants it). A re-run that finds the version already published signs the
+      digest the registry holds, so a run that pushed but failed to sign can be
+      re-run into a signed chart.
+    required: false
+    default: 'false'
+
+  artifacthub-repo-file:
+    description: |
+      Path to an `artifacthub-repo.yml` to push next to the chart, as the chart
+      repository's `artifacthub.io` tag. Artifact Hub reads it for Verified
+      Publisher (`repositoryID`) and ownership claims (`owners`). Empty pushes
+      nothing.
+    required: false
+    default: ''
+
+  artifacthub-api-key-id:
+    description: |
+      Artifact Hub API key ID. With `artifacthub-api-key-secret`, the chart's
+      OCI repository is added to Artifact Hub when it is not listed there yet
+      (Artifact Hub lists one repository per OCI chart; an existing one is left
+      alone). Its ID comes back in the `artifacthub-repository-id` output and
+      the job summary, for `repositoryID` in artifacthub-repo.yml. Pass a
+      workflow secret.
+    required: false
+    default: ''
+
+  artifacthub-api-key-secret:
+    description: 'Artifact Hub API key secret, paired with `artifacthub-api-key-id`. Pass a workflow secret.'
+    required: false
+    default: ''
+
+  artifacthub-org:
+    description: |
+      Artifact Hub organization to add the chart repository under. Empty adds
+      it under the user who owns the API key.
+    required: false
+    default: ''
+
+  artifacthub-repository-name:
+    description: |
+      Name of the chart's repository on Artifact Hub, which appears in its
+      package URLs and is unique across Artifact Hub. Lowercase letters, digits
+      and hyphens, starting with a letter. Defaults to the chart's name.
+    required: false
+    default: ''
 
   # ── CI-specific ──────────────────────────────────────────────────────────
   enforce_branch_naming:
@@ -1166,6 +1247,9 @@ outputs:
   package-published:
     description: '"true" if a language package was packed and pushed to the configured feed.'
     value: ${{ steps.publish-package.outputs.published }}
+  artifacthub-repository-id:
+    description: 'Artifact Hub repository ID of the published chart (package-ecosystem: helm with the artifacthub-api-key-* inputs set).'
+    value: ${{ steps.publish-package.outputs.artifacthub_repository_id }}
   image-scanned:
     description: '"true" if the assembled pr-<N> image(s) were scanned (mode: ci with image-scan).'
     value: ${{ steps.scan-image.outputs.scanned }}
@@ -2857,7 +2941,26 @@ runs:
         ruby-version: ${{ inputs.ruby-version }}
 
     # No setup step for `container` — docker is preinstalled on the runners; the
-    # script does `docker login`/`build`/`push` directly.
+    # script does `docker login`/`build`/`push` directly. Nor for `helm` itself,
+    # which is preinstalled too; only its opt-in extras need a tool.
+
+    - name: Install cosign (helm chart signing)
+      if: |
+        inputs.mode == 'release' &&
+        inputs.publish-package == 'true' &&
+        inputs.package-ecosystem == 'helm' &&
+        inputs.helm-sign == 'true' &&
+        steps.normalize.outputs.released == 'true'
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+    - name: Install ORAS (Artifact Hub metadata)
+      if: |
+        inputs.mode == 'release' &&
+        inputs.publish-package == 'true' &&
+        inputs.package-ecosystem == 'helm' &&
+        inputs.artifacthub-repo-file != '' &&
+        steps.normalize.outputs.released == 'true'
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
 
     - name: Publish package
       id: publish-package
@@ -2886,6 +2989,15 @@ runs:
         NPM_PROVENANCE: ${{ inputs.npm-provenance }}
         PYPI_TRUSTED_PUBLISHING: ${{ inputs.pypi-trusted-publishing }}
         AWS_ROLE_TO_ASSUME: ${{ inputs.aws-role-to-assume }}
+        RELEASE_TAG: ${{ steps.normalize.outputs.tag }}
+        HELM_APP_VERSION: ${{ inputs.helm-app-version }}
+        HELM_LINT: ${{ inputs.helm-lint }}
+        HELM_SIGN: ${{ inputs.helm-sign }}
+        ARTIFACTHUB_REPO_FILE: ${{ inputs.artifacthub-repo-file }}
+        ARTIFACTHUB_API_KEY_ID: ${{ inputs.artifacthub-api-key-id }}
+        ARTIFACTHUB_API_KEY_SECRET: ${{ inputs.artifacthub-api-key-secret }}
+        ARTIFACTHUB_ORG: ${{ inputs.artifacthub-org }}
+        ARTIFACTHUB_REPOSITORY_NAME: ${{ inputs.artifacthub-repository-name }}
       run: "${GITHUB_ACTION_PATH}/scripts/publish-package.sh"
 
     # ═════════════════════════════════════════════════════════════════════════

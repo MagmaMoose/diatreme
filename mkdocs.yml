@@ -21,6 +21,7 @@ nav:
   - Broker: worker.md
   - How-to:
       - Releasing several packages: how-to/release-several-packages.md
+      - Publishing a public Helm chart: how-to/publish-a-helm-chart.md
   - Reference:
       - Action: reference/action.md
       - Broker API: reference/broker-api.md
