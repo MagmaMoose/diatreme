@@ -156,8 +156,9 @@ EOF
   # curl stub: the GHCR anonymous-pull probe (STUB_PRIVATE makes the package
   # private) and the Artifact Hub API. Search answers from STUB_AH_EXISTING or
   # from whether a POST has created the repository; STUB_AH_POST_STATUS makes
-  # the POST fail, STUB_AH_DOWN every call. Header FILES are copied to
-  # HEADER_LOG, so tests can tell a key sent in a file from one put in argv.
+  # the POST fail, STUB_AH_READBACK_FAIL the search after it, and STUB_AH_DOWN
+  # every call. Header FILES are copied to HEADER_LOG, so tests can tell a key
+  # sent in a file from one put in argv.
   cat > "${BIN}/curl" <<'EOF'
 #!/usr/bin/env bash
 echo "curl $*" >> "${STUB_LOG}"
@@ -188,6 +189,7 @@ case "$*" in
      elif [ -n "${STUB_AH_EXISTING:-}" ]; then
        printf '[{"repository_id":"id-existing","url":"%s"}]' "${url_param}"
      elif [ -f "${AH_CREATED}" ]; then
+       [ -z "${STUB_AH_READBACK_FAIL:-}" ] || exit 22
        printf '[{"repository_id":"id-other","url":"oci://elsewhere"},{"repository_id":"id-new","url":"%s"}]' "${url_param}"
      else
        printf '[]'
@@ -819,6 +821,17 @@ named_chart() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"::warning::could not search Artifact Hub"* ]]
   grep -Fq "published=true" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: a listing whose ID cannot be read back says so instead of going quiet" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme STUB_AH_READBACK_FAIL=1 \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "ah-post" "${STUB_LOG}"
+  [[ "$output" == *"::warning::added oci://ghcr.io/acme/charts/demo to Artifact Hub but could not read back its ID"* ]]
+  ! grep -Fq "artifacthub_repository_id" "${GITHUB_OUTPUT}"
 }
 
 @test "helm: a GHCR chart Artifact Hub cannot pull anonymously gets a warning" {
