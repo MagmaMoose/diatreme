@@ -60,9 +60,8 @@ no token to rotate.
 - **Supply chain built in** — scan the assembled image on the PR to gate it, then route
   the *released* image's CycloneDX SBOM to Dependency-Track, with optional findings to
   DefectDojo. One project version per release, not one per pull request.
-- **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and Helm
-  charts, to GitHub Packages or public registries. A chart can be linted, cosign-signed
-  and listed on Artifact Hub in the same run.
+- **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
+  Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs and native
   auto-merge.
 
