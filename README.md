@@ -60,8 +60,8 @@ no token to rotate.
 - **Supply chain built in** — scan the assembled image on the PR to gate it, then route
   the *released* image's CycloneDX SBOM to Dependency-Track, with optional findings to
   DefectDojo. One project version per release, not one per pull request.
-- **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers and pip, to
-  GitHub Packages or public registries.
+- **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
+  Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs and native
   auto-merge.
 
@@ -91,7 +91,7 @@ flowchart LR
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 90 inputs and every output →
+All 100 inputs and every output →
 **[Action reference](https://magmamoose.github.io/diatreme/reference/action/)**
 
 ## Documentation

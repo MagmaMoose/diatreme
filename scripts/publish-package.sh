@@ -45,10 +45,26 @@
 #   PYPI_TRUSTED_PUBLISHING - true | false. Mint a PyPI upload token from the
 #                           workflow's GitHub OIDC identity instead of TOKEN
 #                           (public PyPI / TestPyPI only; needs id-token: write).
+#   RELEASE_TAG           - the release tag (tag-prefix + version), for
+#                           HELM_APP_VERSION=tag.
+#   HELM_APP_VERSION      - version | tag | chart: what a chart's appVersion is
+#                           set to (default version).
+#   HELM_LINT             - true | false. `helm lint` before packaging.
+#   HELM_SIGN             - true | false. cosign-sign the pushed chart by digest
+#                           (keyless; needs id-token: write and cosign on PATH).
+#   ARTIFACTHUB_REPO_FILE - artifacthub-repo.yml to push as the chart's
+#                           `artifacthub.io` tag (needs oras on PATH).
+#   ARTIFACTHUB_API_KEY_ID / ARTIFACTHUB_API_KEY_SECRET - list the chart on
+#                           Artifact Hub when it is not listed yet.
+#   ARTIFACTHUB_ORG       - Artifact Hub organization to list it under (empty:
+#                           the key's user).
+#   ARTIFACTHUB_REPOSITORY_NAME - its Artifact Hub name (default: chart name).
+#   ARTIFACTHUB_API_URL   - Artifact Hub API base (default the public one).
 #
 # Side effects:
-#   - Writes `published=true|false` to $GITHUB_OUTPUT when that var is set.
-#   - Masks TOKEN in the workflow log.
+#   - Writes `published=true|false` to $GITHUB_OUTPUT when that var is set, and
+#     `artifacthub_repository_id` when a chart is listed on Artifact Hub.
+#   - Masks TOKEN (and an Artifact Hub key secret) in the workflow log.
 #
 # Exit codes:
 #   0 - package published (re-runs are idempotent: nuget --skip-duplicate,
@@ -137,6 +153,87 @@ if not token:
     sys.exit("::error::PyPI mint-token response had no 'token': %s" % json.dumps(resp))
 print(token)
 PY
+}
+
+# The chart digest from `helm push` / `helm pull` output on stdin, or nothing.
+helm_digest() {
+  sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64}).*$/\1/p' | tail -n 1
+}
+
+# Artifact Hub reads charts anonymously, and a new GHCR package starts out
+# private: Artifact Hub then lists a repository with nothing in it, which looks
+# like its bug rather than ours. Only GHCR is probed; its anonymous token
+# endpoint answers 403 for a package that is not public.
+warn_unless_public() {
+  local registry="$1" repo="$2" version="$3" token=""
+  [ "${registry}" = "ghcr.io" ] || return 0
+  token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
+    | jq -r '.token // empty' 2>/dev/null || true)"
+  if [ -n "${token}" ] && curl -fsS -o /dev/null \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+      "https://ghcr.io/v2/${repo}/manifests/${version}" 2>/dev/null; then
+    return 0
+  fi
+  echo "::warning::${registry}/${repo}:${version} cannot be pulled anonymously, so Artifact Hub cannot read it. Make the package public in its GitHub package settings."
+}
+
+ARTIFACTHUB_API_URL="${ARTIFACTHUB_API_URL:-https://artifacthub.io/api/v1}"
+
+# The ID of the Artifact Hub repository whose URL is exactly $2, or nothing.
+# $1 is a curl header file holding the API key.
+artifacthub_find() {
+  curl -fsS -G -H @"$1" "${ARTIFACTHUB_API_URL}/repositories/search" \
+    --data-urlencode "kind=0" --data-urlencode "url=$2" --data-urlencode "limit=60" \
+    | jq -r --arg url "$2" '[.[] | select(.url == $url) | .repository_id] | first // empty'
+}
+
+# List the chart's OCI repository ($1) on Artifact Hub as $2, unless it is listed
+# already, and report its ID. Artifact Hub is a sink: when it is down or says no,
+# the chart is still published, so this warns and never fails the release. The
+# API key goes to curl in a header FILE, because argv is readable by every
+# process on the runner.
+list_on_artifacthub() {
+  local url="$1" name="$2" headers response endpoint status id=""
+  headers="$(mktemp)"
+  response="$(mktemp)"
+  chmod 600 "${headers}"
+  printf 'X-API-KEY-ID: %s\nX-API-KEY-SECRET: %s\n' \
+    "${ARTIFACTHUB_API_KEY_ID}" "${ARTIFACTHUB_API_KEY_SECRET}" > "${headers}"
+
+  if ! id="$(artifacthub_find "${headers}" "${url}")"; then
+    echo "::warning::could not search Artifact Hub for ${url}; the chart is published but its listing was not checked."
+    rm -f "${headers}" "${response}"
+    return 0
+  fi
+  if [ -z "${id}" ]; then
+    endpoint="${ARTIFACTHUB_API_URL}/repositories/user"
+    [ -n "${ARTIFACTHUB_ORG:-}" ] && endpoint="${ARTIFACTHUB_API_URL}/repositories/org/${ARTIFACTHUB_ORG}"
+    status="$(jq -nc --arg name "${name}" --arg url "${url}" \
+        '{kind: 0, name: $name, display_name: $name, url: $url}' \
+      | curl -sS -o "${response}" -w '%{http_code}' -X POST -H @"${headers}" \
+          -H 'Content-Type: application/json' --data-binary @- "${endpoint}" || true)"
+    if [ "${status}" != "201" ]; then
+      echo "::warning::Artifact Hub did not add ${url} as '${name}' (HTTP ${status:-none}): $(head -c 300 "${response}"). A name someone else holds needs artifacthub-repository-name."
+      rm -f "${headers}" "${response}"
+      return 0
+    fi
+    echo "Added ${url} to Artifact Hub as '${name}'."
+    id="$(artifacthub_find "${headers}" "${url}" || true)"
+  fi
+  rm -f "${headers}" "${response}"
+
+  [ -n "${id}" ] || return 0
+  echo "Artifact Hub repository ID: ${id}"
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "artifacthub_repository_id=${id}" >> "${GITHUB_OUTPUT}"
+  fi
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      echo "### Artifact Hub"
+      echo "\`${url}\` is listed as repository \`${id}\`. Put \`repositoryID: ${id}\` in artifacthub-repo.yml for Verified Publisher."
+    } >> "${GITHUB_STEP_SUMMARY}"
+  fi
 }
 
 OWNER_LOWER="$(printf '%s' "${OWNER:-}" | tr '[:upper:]' '[:lower:]')"
@@ -535,27 +632,132 @@ XML
     fi
     REPO_PATH="$(printf '%s' "${REPO_PATH}" | tr '[:upper:]' '[:lower:]')"
 
+    # Everything the opt-in extras need is checked HERE, before anything is
+    # pushed: a misconfigured extra must not leave a chart half-published.
+    case "${HELM_APP_VERSION:-version}" in
+      version) APP_VERSION="${VERSION}" ;;
+      tag)
+        # Image promotion pushes the release TAG (tag-prefix + version, v1.4.0 by
+        # default), not the bare version. A chart whose default image tag is its
+        # appVersion has to carry the tag, or it points at an image nobody pushed.
+        APP_VERSION="${RELEASE_TAG:-}"
+        if [ -z "${APP_VERSION}" ]; then
+          echo "::error::helm-app-version: tag needs the release tag, and this run has none."
+          exit 1
+        fi
+        ;;
+      chart) APP_VERSION="" ;;
+      *)
+        echo "::error::helm-app-version must be version, tag or chart, not '${HELM_APP_VERSION}'."
+        exit 1
+        ;;
+    esac
+
+    AH_KEYS=false
+    if [ -n "${ARTIFACTHUB_API_KEY_ID:-}" ] && [ -n "${ARTIFACTHUB_API_KEY_SECRET:-}" ]; then
+      AH_KEYS=true
+      echo "::add-mask::${ARTIFACTHUB_API_KEY_SECRET}"
+    elif [ -n "${ARTIFACTHUB_API_KEY_ID:-}${ARTIFACTHUB_API_KEY_SECRET:-}" ]; then
+      echo "::error::artifacthub-api-key-id and artifacthub-api-key-secret go together, and only one is set."
+      exit 1
+    fi
+    if [ -n "${ARTIFACTHUB_REPO_FILE:-}" ] && [ ! -f "${ARTIFACTHUB_REPO_FILE}" ]; then
+      echo "::error::artifacthub-repo-file '${ARTIFACTHUB_REPO_FILE}' does not exist."
+      exit 1
+    fi
+
+    # helm pushes a chart to <registry>/<path>/<chart name>: the repository that
+    # cosign signs and Artifact Hub lists.
+    CHART_NAME="$(sed -nE "s/^name:[[:space:]]*['\"]?([^'\"[:space:]#]+).*$/\1/p" "${CHART_DIR}/Chart.yaml" | head -n 1)"
+    CHART_REPO="${REGISTRY}/${REPO_PATH}/${CHART_NAME}"
+    if [ -z "${CHART_NAME}" ] && { [ "${HELM_SIGN:-false}" = "true" ] || [ -n "${ARTIFACTHUB_REPO_FILE:-}" ] || [ "${AH_KEYS}" = "true" ]; }; then
+      echo "::error::helm: '${CHART_DIR}/Chart.yaml' has no name, so there is no chart repository to sign or list."
+      exit 1
+    fi
+    AH_NAME="${ARTIFACTHUB_REPOSITORY_NAME:-${CHART_NAME}}"
+    if [ "${AH_KEYS}" = "true" ] && ! printf '%s' "${AH_NAME}" | grep -Eq '^[a-z][a-z0-9-]*$'; then
+      echo "::error::'${AH_NAME}' is not a valid Artifact Hub repository name (lowercase letters, digits and hyphens, starting with a letter). Set artifacthub-repository-name."
+      exit 1
+    fi
+
+    if [ "${HELM_LINT:-false}" = "true" ]; then
+      echo "helm lint '${CHART_DIR}'"
+      if ! helm lint "${CHART_DIR}"; then
+        echo "::error::helm lint failed for '${CHART_DIR}'; nothing was published."
+        exit 1
+      fi
+    fi
+
     CHART_OUT="$(mktemp -d)"
-    # --version AND --app-version: a chart whose appVersion lags its version ships
-    # the previous image, which is invisible until something is running the wrong
-    # code. Both come from the release, so they cannot drift.
-    echo "helm package '${CHART_DIR}' (version ${VERSION}) -> oci://${REGISTRY}/${REPO_PATH}"
-    helm package "${CHART_DIR}" \
-      --version "${VERSION}" \
-      --app-version "${VERSION}" \
-      --destination "${CHART_OUT}"
+    # --version always, and --app-version unless helm-app-version is `chart`: a
+    # chart whose appVersion lags its version ships the previous image, which is
+    # invisible until something is running the wrong code.
+    PACKAGE_ARGS=(--version "${VERSION}")
+    if [ -n "${APP_VERSION}" ]; then
+      PACKAGE_ARGS+=(--app-version "${APP_VERSION}")
+    fi
+    echo "helm package '${CHART_DIR}' (version ${VERSION}, appVersion ${APP_VERSION:-as committed}) -> oci://${REGISTRY}/${REPO_PATH}"
+    helm package "${CHART_DIR}" "${PACKAGE_ARGS[@]}" --destination "${CHART_OUT}"
 
     # Credentials over stdin, never argv.
     printf '%s' "${TOKEN}" | helm registry login "${REGISTRY}" \
       --username "${USERNAME:-x-access-token}" --password-stdin
 
+    # helm prints the digest it pushed, which is what gets signed. A re-run that
+    # finds the version already there prints none.
+    DIGEST=""
+    PUSH_LOG="$(mktemp)"
     shopt -s nullglob
     for chart in "${CHART_OUT}"/*.tgz; do
       echo "helm push '$(basename "${chart}")'"
+      push_rc=0
       run_publish 'already exists|409|Conflict' \
-        helm push "${chart}" "oci://${REGISTRY}/${REPO_PATH}"
+        helm push "${chart}" "oci://${REGISTRY}/${REPO_PATH}" >"${PUSH_LOG}" 2>&1 || push_rc=$?
+      cat "${PUSH_LOG}"
+      [ "${push_rc}" -eq 0 ] || exit "${push_rc}"
+      DIGEST="$(helm_digest < "${PUSH_LOG}")"
     done
     shopt -u nullglob
+    rm -f "${PUSH_LOG}"
+
+    if [ "${HELM_SIGN:-false}" = "true" ]; then
+      if [ -z "${DIGEST}" ]; then
+        # Already published: ask the registry, so a run that pushed and then
+        # failed to sign can be re-run into a signed chart.
+        PULL_DIR="$(mktemp -d)"
+        DIGEST="$(helm pull "oci://${CHART_REPO}" --version "${VERSION}" --destination "${PULL_DIR}" 2>&1 | helm_digest || true)"
+        rm -rf "${PULL_DIR}"
+      fi
+      if [ -z "${DIGEST}" ]; then
+        echo "::error::no digest for ${CHART_REPO}:${VERSION}; the chart is published but NOT signed."
+        exit 1
+      fi
+      printf '%s' "${TOKEN}" | cosign login "${REGISTRY}" \
+        --username "${USERNAME:-x-access-token}" --password-stdin
+      echo "cosign sign ${CHART_REPO}@${DIGEST}"
+      cosign sign --yes "${CHART_REPO}@${DIGEST}"
+    fi
+
+    if [ -n "${ARTIFACTHUB_REPO_FILE:-}" ]; then
+      printf '%s' "${TOKEN}" | oras login "${REGISTRY}" \
+        --username "${USERNAME:-x-access-token}" --password-stdin
+      echo "oras push ${CHART_REPO}:artifacthub.io"
+      # oras records a file's path as its layer title, so push from the file's
+      # own directory and name it bare.
+      (
+        cd "$(dirname "${ARTIFACTHUB_REPO_FILE}")"
+        oras push "${CHART_REPO}:artifacthub.io" \
+          --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+          "$(basename "${ARTIFACTHUB_REPO_FILE}"):application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
+      )
+    fi
+
+    if [ -n "${ARTIFACTHUB_REPO_FILE:-}" ] || [ "${AH_KEYS}" = "true" ]; then
+      warn_unless_public "${REGISTRY}" "${REPO_PATH}/${CHART_NAME}" "${VERSION}"
+    fi
+    if [ "${AH_KEYS}" = "true" ]; then
+      list_on_artifacthub "oci://${CHART_REPO}" "${AH_NAME}"
+    fi
     ;;
 
   '')
