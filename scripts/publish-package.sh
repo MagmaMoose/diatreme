@@ -219,7 +219,10 @@ list_on_artifacthub() {
       return 0
     fi
     echo "Added ${url} to Artifact Hub as '${name}'."
-    id="$(artifacthub_find "${headers}" "${url}" || true)"
+    if ! id="$(artifacthub_find "${headers}" "${url}")"; then
+      echo "::warning::added ${url} to Artifact Hub but could not read back its ID; the Artifact Hub control panel shows it."
+      id=""
+    fi
   fi
   rm -f "${headers}" "${response}"
 
