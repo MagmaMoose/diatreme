@@ -1,3 +1,10 @@
+INHERIT: mkdocs.base.yml
+# The fleet base (provisioned by Caldrith from MagmaMoose/admin) supplies site_url
+# (https://docs.magmamoose.com/diatreme/), the theme, the accent and every markdown
+# extension. Without this line MkDocs had no site_url: no canonical links and an
+# empty sitemap.xml at docs.magmamoose.com/diatreme/. A repo must not declare
+# markdown_extensions or plugins of its own, because MkDocs replaces lists instead
+# of merging them; see the comment at the top of mkdocs.base.yml.
 site_name: Diatreme
 site_description: >-
   Release and deployment orchestration: a GitHub Marketplace composite action
@@ -5,43 +12,6 @@ site_description: >-
 repo_url: https://github.com/MagmaMoose/diatreme
 repo_name: MagmaMoose/diatreme
 docs_dir: docs
-
-theme:
-  name: material
-  icon:
-    repo: fontawesome/brands/github
-  palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: deep purple
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to light mode
-  features:
-    - navigation.instant
-    - navigation.top
-    - content.code.copy
-    - toc.follow
-
-markdown_extensions:
-  - admonition
-  - attr_list
-  - md_in_html
-  - tables
-  - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
-  - toc:
-      permalink: true
 
 nav:
   - Home: index.md
