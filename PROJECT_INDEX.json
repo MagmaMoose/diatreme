@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-16T00:00:00Z",
+  "generated": "2026-09-23T00:00:00Z",
   "summary": "Diatreme is a release/deployment orchestrator published to the GitHub Marketplace as a composite action, plus a hosted GitHub-App backend that brokers OIDC tokens for it. The action runs on the runner (bash, bats-tested); the broker runs as a service and is called over HTTP. Neither imports the other. Consumers pin the action by SHA, so input names, defaults and broker wire responses are frozen API surface.",
   "entrypoints": [
     "action.yml:runs.steps",
