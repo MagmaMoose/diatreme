@@ -271,8 +271,10 @@ sends your OIDC tokens to that server.
 
 `publish-package` can push to GitHub Packages or public registries, on github.com
 and GitHub Enterprise, for these ecosystems: `nuget`, `npm`, `maven`, `gradle`,
-`rubygems`, `container`, `pip`, `s3`. See the README's "Publishing language packages"
-section for per-ecosystem inputs (feed URLs, trusted publishing, provenance).
+`rubygems`, `container`, `helm`, `pip`, `s3`. See the README's "Publishing language
+packages" section for per-ecosystem inputs (feed URLs, trusted publishing, provenance).
+A public Helm chart has its own page:
+[Publishing a public Helm chart](how-to/publish-a-helm-chart.md).
 
 ## Outputs
 

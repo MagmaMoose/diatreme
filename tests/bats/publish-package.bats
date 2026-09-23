@@ -107,18 +107,99 @@ EOF
   unset STUB_NO_PKG || true
   # helm stub: log every call; on `package`, drop a .tgz into --destination so
   # the script's glob finds something to push.
+  # `push` prints the digest the way helm does (or, with STUB_HELM_EXISTS, the
+  # registry's "already exists" refusal); `pull` prints the published digest;
+  # `lint` fails with STUB_LINT_FAIL.
   cat > "${BIN}/helm" <<'EOF'
 #!/usr/bin/env bash
 echo "helm $*" >> "${STUB_LOG}"
-if [ "${1:-}" = "package" ]; then
-  dest=""
-  while [ $# -gt 0 ]; do [ "$1" = "--destination" ] && dest="${2:-}"; shift; done
-  [ -n "${dest}" ] && { mkdir -p "${dest}"; : > "${dest}/chart-0.0.0.tgz"; }
-fi
-if [ "${1:-}" = "registry" ]; then cat >/dev/null; fi
+case "${1:-}" in
+  package)
+    dest=""
+    while [ $# -gt 0 ]; do [ "$1" = "--destination" ] && dest="${2:-}"; shift; done
+    [ -n "${dest}" ] && { mkdir -p "${dest}"; : > "${dest}/chart-0.0.0.tgz"; }
+    ;;
+  registry) cat >/dev/null ;;
+  push)
+    if [ -n "${STUB_HELM_EXISTS:-}" ]; then
+      echo "Error: failed to push: 409 Conflict: tag already exists" >&2
+      exit 1
+    fi
+    echo "Pushed: ${3#oci://}/demo:0.0.0"
+    echo "Digest: sha256:$(printf 'a%.0s' $(seq 64))"
+    ;;
+  pull)
+    echo "Pulled: ${2#oci://}:0.0.0"
+    echo "Digest: sha256:$(printf 'b%.0s' $(seq 64))"
+    ;;
+  lint) [ -z "${STUB_LINT_FAIL:-}" ] || { echo "[ERROR] Chart.yaml: broken"; exit 1; } ;;
+esac
 exit 0
 EOF
-  chmod +x "${BIN}/helm"
+
+  # cosign / oras stubs: log every call; `login` swallows the password on stdin,
+  # and oras also records the directory it pushed from (the layer title).
+  cat > "${BIN}/cosign" <<'EOF'
+#!/usr/bin/env bash
+echo "cosign $*" >> "${STUB_LOG}"
+[ "${1:-}" = "login" ] && cat >/dev/null
+exit 0
+EOF
+  cat > "${BIN}/oras" <<'EOF'
+#!/usr/bin/env bash
+echo "oras $*" >> "${STUB_LOG}"
+[ "${1:-}" = "login" ] && cat >/dev/null
+[ "${1:-}" = "push" ] && echo "oras-cwd $(pwd)" >> "${STUB_LOG}"
+exit 0
+EOF
+
+  # curl stub: the GHCR anonymous-pull probe (STUB_PRIVATE makes the package
+  # private) and the Artifact Hub API. Search answers from STUB_AH_EXISTING or
+  # from whether a POST has created the repository; STUB_AH_POST_STATUS makes
+  # the POST fail, STUB_AH_DOWN every call. Header FILES are copied to
+  # HEADER_LOG, so tests can tell a key sent in a file from one put in argv.
+  cat > "${BIN}/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "curl $*" >> "${STUB_LOG}"
+out="" url_param="" post=false args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -o) out="${args[$((i + 1))]}" ;;
+    -X) [ "${args[$((i + 1))]}" = "POST" ] && post=true ;;
+    -H) h="${args[$((i + 1))]}"; [ "${h#@}" != "${h}" ] && cat "${h#@}" >> "${HEADER_LOG}" ;;
+    url=*) url_param="${args[$i]#url=}" ;;
+  esac
+done
+endpoint="${args[${#args[@]}-1]}"
+case "$*" in
+  *ghcr.io/token*) [ -z "${STUB_PRIVATE:-}" ] || exit 22; echo '{"token":"anonymous"}' ;;
+  *ghcr.io/v2/*) [ -z "${STUB_PRIVATE:-}" ] || exit 22 ;;
+  *) [ -z "${STUB_AH_DOWN:-}" ] || exit 7
+     if [ "${post}" = true ]; then
+       echo "ah-post ${endpoint}" >> "${STUB_LOG}"
+       cat > "${AH_POST_BODY}"
+       if [ -n "${STUB_AH_POST_STATUS:-}" ]; then
+         echo '{"message":"repository name already taken"}' > "${out:-/dev/null}"
+         printf '%s' "${STUB_AH_POST_STATUS}"
+       else
+         : > "${AH_CREATED}"
+         printf '201'
+       fi
+     elif [ -n "${STUB_AH_EXISTING:-}" ]; then
+       printf '[{"repository_id":"id-existing","url":"%s"}]' "${url_param}"
+     elif [ -f "${AH_CREATED}" ]; then
+       printf '[{"repository_id":"id-other","url":"oci://elsewhere"},{"repository_id":"id-new","url":"%s"}]' "${url_param}"
+     else
+       printf '[]'
+     fi ;;
+esac
+exit 0
+EOF
+  chmod +x "${BIN}/helm" "${BIN}/cosign" "${BIN}/oras" "${BIN}/curl"
+  export HEADER_LOG="${WORK}/headers.log" AH_POST_BODY="${WORK}/ah-post.json" AH_CREATED="${WORK}/ah-created"
+  export ARTIFACTHUB_API_URL="https://ah.test/api/v1"
+  export GITHUB_STEP_SUMMARY="${WORK}/summary.md"
+  : > "${HEADER_LOG}"; : > "${GITHUB_STEP_SUMMARY}"
 
 }
 
@@ -544,4 +625,234 @@ EOF
   run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
   [ "$status" -eq 0 ]
   ! grep -Fq "s3cr3t-token" "${STUB_LOG}"
+}
+
+# --- helm: public-chart extras (all opt-in) -----------------------------------
+
+# A chart with a name: the extras address <registry>/<path>/<name>.
+named_chart() {
+  mkdir -p "${WORK}/chart"
+  printf 'apiVersion: v2\nname: demo\nversion: 0.0.0\n' > "${WORK}/chart/Chart.yaml"
+}
+
+@test "helm: helm-app-version tag carries the release tag, which is what image promotion pushed" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=2.1.0 RELEASE_TAG=v2.1.0 HELM_APP_VERSION=tag OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Eq 'helm package .*--version 2.1.0 --app-version v2.1.0 ' "${STUB_LOG}"
+}
+
+@test "helm: helm-app-version tag with no release tag fails before anything is pushed" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=2.1.0 HELM_APP_VERSION=tag OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"needs the release tag"* ]]
+  ! grep -Fq "helm push" "${STUB_LOG}"
+}
+
+@test "helm: helm-app-version chart keeps the committed appVersion" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=2.1.0 HELM_APP_VERSION=chart OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Eq 'helm package .*--version 2.1.0 --destination' "${STUB_LOG}"
+  ! grep -Fq -- "--app-version" "${STUB_LOG}"
+}
+
+@test "helm: an unknown helm-app-version fails with the choices" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=2.1.0 HELM_APP_VERSION=latest OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be version, tag or chart"* ]]
+}
+
+@test "helm: helm-lint lints before packaging, and a failing lint publishes nothing" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 HELM_LINT=true OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(grep -nE '^helm (lint|package)' "${STUB_LOG}" | cut -d' ' -f2 | tr '\n' ' ')" = "lint package " ]
+
+  : > "${STUB_LOG}"; : > "${GITHUB_OUTPUT}"
+  run env ECOSYSTEM=helm VERSION=1.0.0 HELM_LINT=true STUB_LINT_FAIL=1 OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"helm lint failed"* ]]
+  ! grep -Fq "helm package" "${STUB_LOG}"
+  ! grep -Fq "published=true" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: helm-sign signs the pushed chart by digest, never by tag" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 HELM_SIGN=true OWNER=Acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "cosign login ghcr.io --username x-access-token --password-stdin" "${STUB_LOG}"
+  grep -Eq "^cosign sign --yes ghcr.io/acme/charts/demo@sha256:a{64}$" "${STUB_LOG}"
+  ! grep -Fq "s3cr3t-token" "${STUB_LOG}"
+}
+
+@test "helm: helm-sign on a re-run signs the digest already in the registry" {
+  # A run that pushed and then failed to sign must be re-runnable into a signed
+  # chart, even though this push is refused as already published.
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 HELM_SIGN=true STUB_HELM_EXISTS=1 OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "helm pull oci://ghcr.io/acme/charts/demo --version 1.0.0" "${STUB_LOG}"
+  grep -Eq "^cosign sign --yes ghcr.io/acme/charts/demo@sha256:b{64}$" "${STUB_LOG}"
+}
+
+@test "helm: artifacthub-repo-file is pushed as the artifacthub.io tag with Artifact Hub's media types" {
+  named_chart
+  mkdir -p "${WORK}/repo"
+  echo "repositoryID: 00000000-0000-0000-0000-000000000000" > "${WORK}/repo/artifacthub-repo.yml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    ARTIFACTHUB_REPO_FILE="${WORK}/repo/artifacthub-repo.yml" \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "oras login ghcr.io --username x-access-token --password-stdin" "${STUB_LOG}"
+  grep -Fq "oras push ghcr.io/acme/charts/demo:artifacthub.io --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml" "${STUB_LOG}"
+  grep -Fq "oras-cwd ${WORK}/repo" "${STUB_LOG}"
+}
+
+@test "helm: a missing artifacthub-repo-file fails before anything is pushed" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme ARTIFACTHUB_REPO_FILE="${WORK}/nope.yml" \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not exist"* ]]
+  ! grep -Fq "helm push" "${STUB_LOG}"
+}
+
+@test "helm: the extras need the chart's name, and say so before anything is pushed" {
+  mkdir -p "${WORK}/chart"; : > "${WORK}/chart/Chart.yaml"
+  run env ECOSYSTEM=helm VERSION=1.0.0 HELM_SIGN=true OWNER=acme \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no name"* ]]
+  ! grep -Fq "helm push" "${STUB_LOG}"
+}
+
+@test "helm: Artifact Hub keys list a chart that is not listed yet, and report its ID" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "ah-post https://ah.test/api/v1/repositories/user" "${STUB_LOG}"
+  [ "$(jq -c . "${AH_POST_BODY}")" = '{"kind":0,"name":"demo","display_name":"demo","url":"oci://ghcr.io/acme/charts/demo"}' ]
+  grep -Fq "artifacthub_repository_id=id-new" "${GITHUB_OUTPUT}"
+  grep -Fq "repositoryID: id-new" "${GITHUB_STEP_SUMMARY}"
+}
+
+@test "helm: a chart already on Artifact Hub is not added again" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme STUB_AH_EXISTING=1 \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  ! grep -Fq "ah-post" "${STUB_LOG}"
+  grep -Fq "artifacthub_repository_id=id-existing" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: artifacthub-org and artifacthub-repository-name choose where and as what" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    ARTIFACTHUB_ORG=acme-org ARTIFACTHUB_REPOSITORY_NAME=acme-demo \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "ah-post https://ah.test/api/v1/repositories/org/acme-org" "${STUB_LOG}"
+  [ "$(jq -r .name "${AH_POST_BODY}")" = "acme-demo" ]
+}
+
+@test "helm: Artifact Hub keys go to curl in a header file, never argv" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "X-API-KEY-SECRET: ah-key-secret" "${HEADER_LOG}"
+  ! grep -Fq "ah-key-secret" "${STUB_LOG}"
+  ! grep -Fq "ah-key-id" "${STUB_LOG}"
+  [[ "$output" == *"::add-mask::ah-key-secret"* ]]
+}
+
+@test "helm: one Artifact Hub key without the other fails before anything is pushed" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme ARTIFACTHUB_API_KEY_ID=ah-key-id \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"go together"* ]]
+  ! grep -Fq "helm push" "${STUB_LOG}"
+}
+
+@test "helm: an Artifact Hub name it would refuse fails before anything is pushed" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme ARTIFACTHUB_REPOSITORY_NAME=Demo_Chart \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a valid Artifact Hub repository name"* ]]
+  ! grep -Fq "helm push" "${STUB_LOG}"
+}
+
+@test "helm: Artifact Hub refusing or down is a warning, never a failed release" {
+  # The chart is already published by then. Failing the job would report a
+  # release that happened as one that did not.
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme STUB_AH_POST_STATUS=400 \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"::warning::Artifact Hub did not add"*"HTTP 400"* ]]
+  grep -Fq "published=true" "${GITHUB_OUTPUT}"
+
+  : > "${GITHUB_OUTPUT}"
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme STUB_AH_DOWN=1 \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"::warning::could not search Artifact Hub"* ]]
+  grep -Fq "published=true" "${GITHUB_OUTPUT}"
+}
+
+@test "helm: a GHCR chart Artifact Hub cannot pull anonymously gets a warning" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme STUB_PRIVATE=1 \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cannot be pulled anonymously"* ]]
+
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme \
+    ARTIFACTHUB_API_KEY_ID=ah-key-id ARTIFACTHUB_API_KEY_SECRET=ah-key-secret \
+    PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"cannot be pulled anonymously"* ]]
+}
+
+@test "helm: without the extras nothing but helm runs" {
+  named_chart
+  run env ECOSYSTEM=helm VERSION=1.0.0 OWNER=acme PACKAGE_PATH="${WORK}/chart" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  ! grep -Eq "^(cosign|oras|curl) " "${STUB_LOG}"
+  ! grep -Fq "helm lint" "${STUB_LOG}"
+}
+
+@test "action.yml threads the helm extras through to the publish step" {
+  for v in RELEASE_TAG HELM_APP_VERSION HELM_LINT HELM_SIGN ARTIFACTHUB_REPO_FILE \
+           ARTIFACTHUB_API_KEY_ID ARTIFACTHUB_API_KEY_SECRET ARTIFACTHUB_ORG \
+           ARTIFACTHUB_REPOSITORY_NAME; do
+    grep -Eq "^        ${v}: \\$\\{\\{ " "${ACTION_YML}"
+  done
+  grep -Fq "artifacthub_repository_id" "${ACTION_YML}"
+  # The tools the extras need are installed only when asked for, and SHA-pinned.
+  grep -Eq "oras-project/setup-oras@[0-9a-f]{40} # v[0-9]" "${ACTION_YML}"
+  grep -Fq "inputs.helm-sign == 'true'" "${ACTION_YML}"
+  grep -Fq "inputs.artifacthub-repo-file != ''" "${ACTION_YML}"
 }

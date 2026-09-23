@@ -45,7 +45,7 @@
     },
     "packaging": {
       "path": "scripts/publish-package.sh",
-      "purpose": "Publishes built artifacts across seven package ecosystems. The largest single script; JSON/branching heavy.",
+      "purpose": "Publishes built artifacts across nine package ecosystems (helm adds lint, cosign signing and Artifact Hub metadata and listing). The largest single script; JSON/branching heavy.",
       "exports": [],
       "depends_on": []
     },
