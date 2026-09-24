@@ -38,7 +38,7 @@ different tools. Detection is two-tier:
    `release-please-config.json` / `.release-please-manifest.json`.
 2. **Falls back to ecosystem manifests**: `pyproject.toml`/`setup.py`,
    `package.json`, `*.csproj`/`*.sln`, with a fixed precedence
-   (`semantic-release-python` → `semantic-release-npm` → `gitversion`).
+   (`semantic-release-python` → `semantic-release-npm` → `gitversion` → `release-please`).
 
 Conflicting tier-1 configs, or no markers at all, fail with an actionable error.
 Passing an explicit `versioning-tool` skips detection entirely.
