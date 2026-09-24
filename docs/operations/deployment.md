@@ -137,9 +137,8 @@ maintainers cannot be reached. Treat both as append-only.
 
 ## Publishing this site
 
-`docs.yml` builds with `mkdocs build --strict` and deploys to GitHub Pages on
-every push to `main` touching `docs/**` or `mkdocs.yml`. Pages must be set to
-the "GitHub Actions" source in repository settings.
+`docs.yml` builds with `mkdocs build --strict` and deploys to Cloudflare Workers
+on every push to `main` touching `docs/**` or `mkdocs.yml`.
 
 Build it locally first:
 

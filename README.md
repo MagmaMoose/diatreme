@@ -3,7 +3,7 @@
 [![CI](https://github.com/MagmaMoose/diatreme/actions/workflows/ci.yaml/badge.svg)](https://github.com/MagmaMoose/diatreme/actions/workflows/ci.yaml)
 [![Latest release](https://img.shields.io/github/v/release/MagmaMoose/diatreme?sort=semver&logo=github)](https://github.com/MagmaMoose/diatreme/releases/latest)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Diatreme-purple?logo=github)](https://github.com/marketplace/actions/diatreme)
-[![Docs](https://img.shields.io/badge/docs-diatreme-purple)](https://magmamoose.github.io/diatreme/)
+[![Docs](https://img.shields.io/badge/docs-diatreme-purple)](https://docs.magmamoose.com/diatreme/)
 [![License](https://img.shields.io/github/license/MagmaMoose/diatreme)](LICENSE)
 
 > *One GitHub Action for your whole release spine: versioning, releases, signed commits,
@@ -15,9 +15,9 @@ provenance-verified retag, and emits a CycloneDX SBOM. The same workflow serves 
 stack: python-semantic-release, semantic-release, GitVersion and release-please are all
 detected from repository markers, so a whole org shares one release job.
 
-**[Documentation](https://magmamoose.github.io/diatreme/)** ·
+**[Documentation](https://docs.magmamoose.com/diatreme/)** ·
 [Install the GitHub App](https://github.com/apps/diatreme/installations/new) ·
-[Action reference](https://magmamoose.github.io/diatreme/reference/action/) ·
+[Action reference](https://docs.magmamoose.com/diatreme/reference/action/) ·
 [Marketplace](https://github.com/marketplace/actions/diatreme)
 
 ## Quickstart
@@ -68,7 +68,7 @@ no token to rotate.
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
 > version computed from another package's history. See
-> [Releasing several packages](https://magmamoose.github.io/diatreme/how-to/release-several-packages/).
+> [Releasing several packages](https://docs.magmamoose.com/diatreme/how-to/release-several-packages/).
 
 ```mermaid
 flowchart LR
@@ -92,17 +92,17 @@ flowchart LR
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
 All 100 inputs and every output →
-**[Action reference](https://magmamoose.github.io/diatreme/reference/action/)**
+**[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [Setup](https://magmamoose.github.io/diatreme/setup/) | Install the App, wire the workflow, develop locally |
-| [Using the action](https://magmamoose.github.io/diatreme/action/) | Modes, Docker builds, image scanning, signing, publishing packages |
-| [Action reference](https://magmamoose.github.io/diatreme/reference/action/) | Every input and output, generated from `action.yml` |
-| [Architecture](https://magmamoose.github.io/diatreme/architecture/) · [Broker](https://magmamoose.github.io/diatreme/worker/) | How it works, and the hosted broker behind it |
-| [Errors](https://magmamoose.github.io/diatreme/reference/errors/) · [Limits](https://magmamoose.github.io/diatreme/reference/limits/) | What went wrong, and what it will not do |
+| [Setup](https://docs.magmamoose.com/diatreme/setup/) | Install the App, wire the workflow, develop locally |
+| [Using the action](https://docs.magmamoose.com/diatreme/action/) | Modes, Docker builds, image scanning, signing, publishing packages |
+| [Action reference](https://docs.magmamoose.com/diatreme/reference/action/) | Every input and output, generated from `action.yml` |
+| [Architecture](https://docs.magmamoose.com/diatreme/architecture/) · [Broker](https://docs.magmamoose.com/diatreme/worker/) | How it works, and the hosted broker behind it |
+| [Errors](https://docs.magmamoose.com/diatreme/reference/errors/) · [Limits](https://docs.magmamoose.com/diatreme/reference/limits/) | What went wrong, and what it will not do |
 
 ## Where it sits
 
