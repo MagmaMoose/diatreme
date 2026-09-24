@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/MagmaMoose/diatreme/security/advisories/new
     about: Do NOT open a public issue for security problems — report privately here (see SECURITY.md).
   - name: 📖 Documentation & usage
-    url: https://magmamoose.github.io/diatreme/
+    url: https://docs.magmamoose.com/diatreme/
     about: Quickstart, inputs/outputs, and the worker reference.

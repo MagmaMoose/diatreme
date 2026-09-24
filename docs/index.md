@@ -40,4 +40,4 @@ Install the action:
 ## Related
 
 - **[MagmaMoose/diatreme-pro](https://github.com/MagmaMoose/diatreme-pro)**: the
-  separate private observability dashboard (release/run history) for the worker.
+  separate private observability dashboard (release/run history) for the broker.
