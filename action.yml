@@ -1087,6 +1087,67 @@ inputs:
     required: false
     default: 'auto'
 
+  promote-from:
+    description: |
+      Promote an existing prerelease to its stable version instead of cutting
+      a new release. Takes the prerelease's git tag, with or without
+      `tag-prefix` (`v1.5.0-rc.3` or `1.5.0-rc.3`), and releases that exact
+      build as `v1.5.0`.
+
+      For flows where no branch ever builds a stable version: a release branch
+      cuts `-rc.N` prereleases, one of them is signed off, and that build is
+      what ships. Pass the approved tag from a `workflow_dispatch` workflow.
+
+      What a promotion does differently from an ordinary release:
+
+        version      The source tag's own, minus its prerelease part. No
+                     versioning tool runs; `version-override` and `force-bump`
+                     are rejected.
+        commit       The run checks out the source tag's commit, so the stable
+                     tag lands on the commit the image was built from,
+                     whichever ref the workflow was started on. A published
+                     package is built from that commit too.
+        image        Each image is retagged from `<image>:<source tag>`. A
+                     source image the registry reports missing fails the run
+                     BEFORE the stable tag is pushed, and a failed retag fails
+                     it too. There is no fresh-build fallback: a rebuild is
+                     not the build that was tested.
+        :latest      Moves only when the promoted version is the highest
+                     stable version under `tag-prefix`. Promoting a fix on an
+                     older release line (1.4.3 once 1.5.0 is out) leaves it
+                     alone.
+        notes        The GitHub Release lists what changed since the previous
+                     stable tag, not since the prerelease being promoted.
+        environment  Always the last entry of `environments`, whatever
+                     `deployment-model`, `branch-map` or the triggering branch
+                     say. `admin-required-from` and `allowed-release-actors`
+                     apply as they do to any production release.
+
+      The source must carry the prerelease identifier of the environment just
+      before the last one in `environments` (usually `rc`), when that
+      environment has one. Promoting a `-dev.N` build to stable is refused.
+
+      Safe to re-run. The stable tag records the prerelease it was promoted
+      from (a `Promoted-From:` line in its message). Finding that tag already
+      in place resumes the promotion and finishes whatever did not land. Any
+      other existing stable tag fails the run, whether it sits on another
+      commit or was promoted from a different prerelease on the same one: a
+      published stable version is never moved.
+
+      `version-file` is not written on a promotion. The artifact is already
+      built, and the run sits on a tag's commit rather than on a branch to
+      commit to.
+
+      Two combinations are refused, because each would undo the point of a
+      promotion. `publish-package` with `package-ecosystem: container` builds
+      a fresh image under the stable version. `npm-provenance` attests the
+      package to the commit the workflow was started on, so it is accepted
+      only when that is the promoted commit: start the workflow from the
+      prerelease tag. For the same reason `image-sign` still signs a promoted
+      image but attests SLSA provenance only when started from that tag.
+    required: false
+    default: ''
+
   # ── Version file injection (any tool) ─────────────────────────────────────
   version-file:
     description: |
@@ -1267,7 +1328,7 @@ outputs:
       none applies (versioning-only runs).
     value: ${{ steps.resolve-image.outputs.image_name }}
   images-promoted:
-    description: 'Number of release image(s) retagged from a provenance-verified source image.'
+    description: 'Number of release image(s) retagged rather than rebuilt: from a provenance-verified pr-<N> image, from the previous environment''s prerelease, or from the prerelease named by promote-from.'
     value: ${{ steps.promote-images.outputs.promoted_count }}
   images-skipped:
     description: 'Number of release image(s) already present in the registry and skipped via image-skip-existing.'
@@ -1278,6 +1339,9 @@ outputs:
   version-files-updated:
     description: 'Number of tracked files the released version was injected into and committed.'
     value: ${{ steps.version-file-inject.outputs.updated_count }}
+  promoted-from:
+    description: 'The prerelease tag this run promoted to stable, prefix included (mode: release with promote-from). Empty on every other run.'
+    value: ${{ steps.promote-source.outputs.source_tag }}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEPS
@@ -1342,6 +1406,52 @@ runs:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        fetch-depth: 0
+        fetch-tags: true
+        token: ${{ steps.auth.outputs.token }}
+        submodules: ${{ inputs.submodules }}
+
+    # ── 2b. Promote an existing prerelease (release mode, opt-in) ────────────
+    # `promote-from` names a prerelease tag and releases that exact build as
+    # its stable version: no versioning tool, no rebuild. Everything that
+    # follows from the name is settled here, before any other step reads the
+    # tree or writes anything: the tag exists, it is from the channel that
+    # feeds production, nothing else in the run would rebuild the artifact,
+    # and the stable tag is either free or is this same promotion's (on that
+    # commit, and recording this prerelease in its message), which is a
+    # promotion being resumed.
+    #
+    # The second checkout then moves the workspace onto the prerelease's
+    # commit. That is what makes the rest of the run the prerelease's own: the
+    # stable tag lands on the commit the image was built from, the bake file
+    # that lists the images is the one that built them, and a published
+    # package is built from the tested source rather than from wherever the
+    # branch has moved to since. It is a second actions/checkout rather than a
+    # `git checkout` so submodules and credentials are handled the same way.
+    #
+    # Every later step reads `steps.promote-source.outputs.*`, never the raw
+    # input, so nothing below can act on a value this step rejected.
+    - name: Resolve promote source
+      id: promote-source
+      if: inputs.mode == 'release' && inputs.promote-from != ''
+      shell: bash
+      env:
+        PROMOTE_FROM: ${{ inputs.promote-from }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        VERSION_OVERRIDE: ${{ inputs.version-override }}
+        FORCE_BUMP: ${{ inputs.force-bump }}
+        ENVIRONMENTS: ${{ inputs.environments }}
+        PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
+        PUBLISH_PACKAGE: ${{ inputs.publish-package }}
+        PACKAGE_ECOSYSTEM: ${{ inputs.package-ecosystem }}
+        NPM_PROVENANCE: ${{ inputs.npm-provenance }}
+      run: "${GITHUB_ACTION_PATH}/scripts/resolve-promote-from.sh"
+
+    - name: Checkout promote source
+      if: steps.promote-source.outputs.commit != ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ steps.promote-source.outputs.commit }}
         fetch-depth: 0
         fetch-tags: true
         token: ${{ steps.auth.outputs.token }}
@@ -1602,6 +1712,7 @@ runs:
         INPUT_ENVIRONMENTS: ${{ inputs.environments }}
         INPUT_PRERELEASE_IDENTIFIERS: ${{ inputs.prerelease-identifiers }}
         INPUT_PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
+        PROMOTE_SOURCE_TAG: ${{ steps.promote-source.outputs.source_tag }}
       run: |
         set -euo pipefail
 
@@ -1615,7 +1726,29 @@ runs:
         echo "Environments:     ${ENVS}"
         echo "Identifiers:      ${IDS}"
 
-        if [ "${DEPLOY_MODEL}" == "bbd" ]; then
+        # A promotion always releases the stable version, so its environment
+        # is the last one by definition and none of the three models gets a
+        # say. That matters most under bbd, where the branch the workflow ran
+        # on would otherwise decide: a promotion started from `release/1.5.0`
+        # maps to the prerelease environment, which is the one thing it is not.
+        # An explicit `environment` that names anything else is a caller who
+        # expects a different kind of promotion than this one, so it is an
+        # error rather than something to overrule quietly.
+        if [ -n "${PROMOTE_SOURCE_TAG}" ]; then
+          STABLE_ENV=$(echo "${ENVS}" | jq -r '.[-1] // empty')
+          if [ -z "${STABLE_ENV}" ]; then
+            echo "::error::promote-from: environments must be a non-empty array. Its last entry is the environment being released to."
+            exit 1
+          fi
+          if [ -n "${ENV}" ] && [ "${ENV}" != "${STABLE_ENV}" ]; then
+            echo "::error::promote-from: a promotion always releases the stable version, to '${STABLE_ENV}' (the last entry of environments), but environment is '${ENV}'. Remove environment, or set it to '${STABLE_ENV}'."
+            exit 1
+          fi
+          ENV="${STABLE_ENV}"
+          echo "promote-from: promoting ${PROMOTE_SOURCE_TAG} to '${ENV}'; deployment-model '${DEPLOY_MODEL}' is not consulted."
+        fi
+
+        if [ -z "${PROMOTE_SOURCE_TAG}" ] && [ "${DEPLOY_MODEL}" == "bbd" ]; then
           if [ -z "${BRANCH_MAP}" ] || [ "${BRANCH_MAP}" == '{}' ] || [ "${BRANCH_MAP}" == 'null' ]; then
             echo "::error::deployment-model is 'bbd' but branch-map is empty."
             exit 1
@@ -1664,7 +1797,7 @@ runs:
           echo "BBD: resolved environment '${ENV}' from branch '${BRANCH}'"
         fi
 
-        if [ "${DEPLOY_MODEL}" == "tbd-pr" ]; then
+        if [ -z "${PROMOTE_SOURCE_TAG}" ] && [ "${DEPLOY_MODEL}" == "tbd-pr" ]; then
           BRANCH_PREFIX="${INPUT_PROMOTE_BRANCH_PREFIX}"
           HEAD_REF="${GITHUB_HEAD_REF}"
           if [ -n "${HEAD_REF}" ] && echo "${HEAD_REF}" | grep -qE "^${BRANCH_PREFIX}/[^/]+/"; then
@@ -1802,15 +1935,87 @@ runs:
         ENVIRONMENTS: ${{ inputs.environments }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-release-actor.sh"
 
+    # ── Promote preflight: the source images exist ───────────────────────────
+    # A promotion retags the image that was tested and never rebuilds it, so a
+    # source image that is not in the registry is a hard stop. The retag sits
+    # after the git tag in the step order, which means finding out there would
+    # leave `v1.5.0` pushed with nothing behind it. Ask first: a failure here
+    # costs no tag, no image and no GitHub Release.
+    #
+    # It sits below both guardrails so a refused actor never reaches the
+    # registry. It needs a login of its own because the release login further
+    # down is gated on `released`, which only exists once the tag is cut; that
+    # later login is skipped on a promotion, since this one already happened.
+    #
+    # The refs are derived exactly as the release scan and the cosign step
+    # derive theirs, each bake target's repository, only at the source tag
+    # rather than the release tag. A bats guard counts the jq literal so the
+    # three cannot drift apart.
+    - name: Log in to container registry (promote preflight)
+      if: inputs.mode == 'release' && steps.promote-source.outputs.source_tag != '' && steps.resolve-image.outputs.image_name != ''
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username || github.actor }}
+        password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
+
+    - name: Verify promote source images
+      if: inputs.mode == 'release' && steps.promote-source.outputs.source_tag != '' && steps.resolve-image.outputs.image_name != ''
+      shell: bash
+      env:
+        OWNER: ${{ github.repository_owner }}
+        INPUT_IMAGE_NAME: ${{ steps.resolve-image.outputs.image_name }}
+        STRATEGY: ${{ steps.resolve-image.outputs.strategy }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_BAKE_FILE: ${{ steps.resolve-image.outputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+        BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
+        PROMOTE_VERSION: ${{ steps.promote-source.outputs.version }}
+        PROMOTE_SOURCE_TAG: ${{ steps.promote-source.outputs.source_tag }}
+      run: |
+        set -euo pipefail
+
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+        export REGISTRY="${INPUT_REGISTRY}"
+        export VERSION="${PROMOTE_VERSION}"
+        # Empty INPUT_PLATFORMS ⇒ defer to docker-bake.hcl (see the build step).
+        if [ -n "${INPUT_PLATFORMS}" ]; then export PLATFORMS="${INPUT_PLATFORMS}"; fi
+
+        if [ "${STRATEGY}" = "dockerfile" ]; then
+          SOURCE_REFS="${REGISTRY}/${IMAGE_NAME}:${PROMOTE_SOURCE_TAG}"$'\n'
+        else
+          # A bake file that does not parse on the prerelease's tree can fail
+          # here first. Say so: with stderr discarded, `set -e` would end the
+          # step without a word.
+          BAKE_ERR=$(mktemp)
+          if ! BAKE_OUTPUT=$(docker buildx bake -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" --print 2>"${BAKE_ERR}"); then
+            echo "::error::promote-from: could not list the bake targets in ${INPUT_BAKE_FILE} at ${PROMOTE_SOURCE_TAG}: $(head -n 3 "${BAKE_ERR}" | tr '\n' ' ')"
+            exit 1
+          fi
+          rm -f "${BAKE_ERR}"
+          SOURCE_REFS=""
+          while IFS= read -r repo; do
+            [ -n "${repo}" ] && SOURCE_REFS="${SOURCE_REFS}${repo}:${PROMOTE_SOURCE_TAG}"$'\n'
+          done < <(echo "${BAKE_OUTPUT}" | jq -r '.target[].tags[0] // empty | split(":")[0]' | sort -u)
+        fi
+
+        echo "Source image(s) to promote:"
+        printf '%s' "${SOURCE_REFS}"
+        SOURCE_REFS="${SOURCE_REFS}" "${GITHUB_ACTION_PATH}/scripts/verify-promote-from-images.sh"
+
     # ── The release version, decided once ────────────────────────────────────
     #
-    # Two things can pin the version before any tool runs, and every step below
-    # gates on this one output rather than on either of them separately:
+    # Three things can pin the version before any tool runs, and every step
+    # below gates on this one output rather than on any of them separately:
     #
-    #   1. `version-override`, validated far above (it serves `mode: ci` too).
-    #   2. The `release/X.Y.Z` branch named in HEAD's merge subject.
+    #   1. `promote-from`, resolved far above: the version is the promoted
+    #      prerelease's own, minus its prerelease part.
+    #   2. `version-override`, validated far above (it serves `mode: ci` too).
+    #   3. The `release/X.Y.Z` branch named in HEAD's merge subject.
     #
-    # (2) exists because the branch name is the only statement of intent a
+    # (3) exists because the branch name is the only statement of intent a
     # squash merge cannot destroy. Squashing a release PR collapses its
     # `feat:`/`fix:` commits into one bullet-list body, the commit-message
     # heuristics stop matching, and the backend falls back to the trunk's
@@ -1822,6 +2027,9 @@ runs:
       if: inputs.mode == 'release'
       shell: bash
       env:
+        PROMOTE_VERSION: ${{ steps.promote-source.outputs.version }}
+        PROMOTE_TAG: ${{ steps.promote-source.outputs.tag }}
+        PROMOTE_SOURCE_TAG: ${{ steps.promote-source.outputs.source_tag }}
         EXPLICIT_VERSION: ${{ steps.version-override.outputs.version }}
         EXPLICIT_TAG: ${{ steps.version-override.outputs.tag }}
         INPUT_RELEASE_BRANCH_VERSIONING: ${{ inputs.release-branch-versioning }}
@@ -1836,6 +2044,14 @@ runs:
           echo "tag=$2"     >> "$GITHUB_OUTPUT"
           echo "source=$3"  >> "$GITHUB_OUTPUT"
         }
+
+        # First, and alone: resolve-promote-from.sh has already refused a run
+        # that sets version-override or force-bump alongside promote-from.
+        if [ -n "${PROMOTE_VERSION}" ]; then
+          echo "Version taken from the promoted prerelease ${PROMOTE_SOURCE_TAG}: ${PROMOTE_VERSION}"
+          emit "${PROMOTE_VERSION}" "${PROMOTE_TAG}" "promote-from"
+          exit 0
+        fi
 
         if [ -n "${EXPLICIT_VERSION}" ]; then
           echo "Version pinned by version-override: ${EXPLICIT_VERSION}"
@@ -2201,9 +2417,14 @@ runs:
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
 
-    # Serves both pinned paths: an explicit `version-override` and a version
-    # read off the release branch. Neither ran a versioning tool, so the tag
-    # this step pushes is the only place the release gets cut.
+    # Serves every pinned path: a promoted prerelease, an explicit
+    # `version-override`, and a version read off the release branch. None of
+    # them ran a versioning tool, so the tag this step pushes is the only place
+    # the release gets cut.
+    #
+    # HEAD is the commit being tagged in all three. On a promotion that is the
+    # prerelease's own commit, because `Checkout promote source` moved the
+    # workspace there.
     - name: Create version-override release tag
       id: version-override-tag
       if: inputs.mode == 'release' && steps.release-version.outputs.version != ''
@@ -2212,15 +2433,33 @@ runs:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
         OVERRIDE_VERSION: ${{ steps.release-version.outputs.version }}
         OVERRIDE_TAG: ${{ steps.release-version.outputs.tag }}
+        PROMOTE_MARKER: ${{ steps.promote-source.outputs.marker }}
       run: |
         set -euo pipefail
         VERSION="${OVERRIDE_VERSION}"
         TAG="${OVERRIDE_TAG}"
         echo "Creating tag: ${TAG}"
 
+        # An existing tag is a no-op release everywhere else: some other run
+        # already cut this version. A promotion names one specific build, so a
+        # stable tag that is already this promotion's is the same run,
+        # interrupted, and re-running it has to finish the job rather than
+        # report "nothing to release" over a missing image.
+        #
+        # "This promotion's" is decided by the marker line written into the
+        # tag's message, not by the commit alone: two prereleases can share a
+        # commit and still be different images.
+        MESSAGE="chore(release): ${TAG}"
+        RESUME_AT_HEAD="false"
+        if [ -n "${PROMOTE_MARKER}" ]; then
+          MESSAGE="${MESSAGE}"$'\n\n'"${PROMOTE_MARKER}"
+          RESUME_AT_HEAD="true"
+        fi
+
         # Shared race-safe tag push. The script emits `released=true|false`
         # to $GITHUB_OUTPUT; we add the tool-specific outputs here.
-        TAG="${TAG}" MESSAGE="chore(release): ${TAG}" \
+        TAG="${TAG}" MESSAGE="${MESSAGE}" \
+          RESUME_AT_HEAD="${RESUME_AT_HEAD}" RESUME_MARKER="${PROMOTE_MARKER}" \
           "${GITHUB_ACTION_PATH}/scripts/push-release-tag.sh"
 
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -2350,11 +2589,17 @@ runs:
     # is in the bypass list. The commit message ends with `[skip ci]` so
     # the push does not retrigger the release workflow.
 
+    # Not on a promotion. The artifact being released is already built, so a
+    # version written now reaches nothing that ships, and the run sits on the
+    # prerelease's commit rather than on a branch: the push target would be
+    # whichever branch the workflow was started from, which need not even be
+    # the line the prerelease belongs to.
     - name: Inject version into tracked file
       id: version-file-inject
       if: |
         inputs.mode == 'release' &&
         steps.normalize.outputs.released == 'true' &&
+        steps.promote-source.outputs.source_tag == '' &&
         (inputs.version-file != '' || inputs.gitversion-appsettings-file != '')
       shell: bash
       env:
@@ -2381,8 +2626,9 @@ runs:
         driver-opts: network=host
         buildkitd-flags: --oci-worker-net=host
 
+    # A promotion logged in already, for its preflight, before the tag was cut.
     - name: Log in to container registry (release)
-      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true'
+      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && steps.promote-source.outputs.source_tag == ''
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
       with:
         registry: ${{ inputs.registry }}
@@ -2414,6 +2660,8 @@ runs:
         INPUT_DOCKERFILE: ${{ inputs.dockerfile }}
         INPUT_IMAGE_SKIP_EXISTING: ${{ inputs.image-skip-existing }}
         REPO_FULL: ${{ github.repository }}
+        PROMOTE_SOURCE_TAG: ${{ steps.promote-source.outputs.source_tag }}
+        PROMOTE_TAG_LATEST: ${{ steps.promote-source.outputs.tag_latest }}
       run: |
         set -euo pipefail
 
@@ -2448,7 +2696,14 @@ runs:
         # Determine promotion strategy
         IS_FIRST_ENV="false"
         PREV_IDENTIFIER=""
-        if [ "${DEPLOY_MODEL}" == "bbd" ]; then
+        if [ -n "${PROMOTE_SOURCE_TAG}" ]; then
+          # promote-from names the source outright, so neither model's search
+          # runs. It is handled as a later-environment retag (no pr-<N>
+          # provenance gate: carrying a tested artifact forward unchanged is
+          # the point), with one difference further down, that a retag which
+          # cannot be done is an error instead of a rebuild.
+          echo "promote-from: retagging ${PROMOTE_SOURCE_TAG}, with no fresh-build fallback"
+        elif [ "${DEPLOY_MODEL}" == "bbd" ]; then
           IS_FIRST_ENV="true"
           echo "BBD: every environment uses its own pr-<N> image"
         else
@@ -2467,7 +2722,10 @@ runs:
         # Resolve source tag suffix
         SOURCE_TAG_SUFFIX=""
         RELEASE_COMMIT=""
-        if [ "${IS_FIRST_ENV}" == "true" ]; then
+        if [ -n "${PROMOTE_SOURCE_TAG}" ]; then
+          SOURCE_TAG_SUFFIX="${PROMOTE_SOURCE_TAG}"
+          echo "Source tag: ${SOURCE_TAG_SUFFIX}"
+        elif [ "${IS_FIRST_ENV}" == "true" ]; then
           # Find the PR associated with this release tag via GitHub API
           COMMIT_SHA=$(gh api "repos/${REPO_FULL}/git/ref/tags/${TAG}" \
             --jq 'if .object.type == "tag" then .object.sha else .object.sha end' 2>/dev/null || echo "")
@@ -2519,6 +2777,17 @@ runs:
           else
             echo "::warning::No tag found matching ${SEARCH_PREFIX}* — will fall back to fresh build"
           fi
+        fi
+
+        # Whether a retag also moves `:latest`. Every stable release does, with
+        # one exception: a promotion of a version that is not the highest
+        # stable one. A fix promoted on an older release line (1.4.3 once
+        # 1.5.0 is out) would otherwise point `:latest` back at that line.
+        TAG_LATEST="false"
+        if [ "${IS_PRERELEASE}" == "false" ]; then TAG_LATEST="true"; fi
+        if [ -n "${PROMOTE_SOURCE_TAG}" ] && [ "${PROMOTE_TAG_LATEST}" != "true" ]; then
+          TAG_LATEST="false"
+          echo "promote-from: ${TAG} is not the highest stable version, so :latest stays where it is"
         fi
 
         # Per-image outcomes are tallied through a FILE, not a variable: the
@@ -2587,7 +2856,7 @@ runs:
                   "${GITHUB_ACTION_PATH}/scripts/probe-image-tag.sh"; then
               SOURCE_DIGEST=$(cat "${DIGEST_TMP}")
             fi
-            if [ -n "${EXISTING_DIGEST}" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+            if [ -n "${EXISTING_DIGEST}" ] && [ "${TAG_LATEST}" == "true" ]; then
               LATEST_MATCHES="false"
               if IMAGE_REF="${IMAGE}:latest" DIGEST_FILE="${DIGEST_TMP}" \
                  "${GITHUB_ACTION_PATH}/scripts/probe-image-tag.sh" \
@@ -2620,7 +2889,7 @@ runs:
             RETAG_OK=true
             RETAG_METHOD="imagetools"
             RETAG_ERR=$(mktemp)
-            if [ "${IS_PRERELEASE}" == "false" ]; then
+            if [ "${TAG_LATEST}" == "true" ]; then
               docker buildx imagetools create --tag "${NEW_TAG}" --tag "${IMAGE}:latest" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
             else
               docker buildx imagetools create --tag "${NEW_TAG}" "${SOURCE}" 2>"${RETAG_ERR}" || RETAG_OK=false
@@ -2641,26 +2910,42 @@ runs:
               if [ "${RETAG_OK}" == "true" ]; then
                 docker tag "${SOURCE}" "${NEW_TAG}" || RETAG_OK=false
               fi
-              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+              if [ "${RETAG_OK}" == "true" ] && [ "${TAG_LATEST}" == "true" ]; then
                 docker tag "${SOURCE}" "${IMAGE}:latest" || RETAG_OK=false
               fi
               if [ "${RETAG_OK}" == "true" ]; then
                 docker push "${NEW_TAG}" || RETAG_OK=false
               fi
-              if [ "${RETAG_OK}" == "true" ] && [ "${IS_PRERELEASE}" == "false" ]; then
+              if [ "${RETAG_OK}" == "true" ] && [ "${TAG_LATEST}" == "true" ]; then
                 docker push "${IMAGE}:latest" || RETAG_OK=false
               fi
             fi
+            # Kept for the promote-from error below, which has no rebuild to
+            # fall back on and so has to say why the retag failed.
+            RETAG_DETAIL=$(head -n 5 "${RETAG_ERR}" 2>/dev/null | tr '\n' ' ' || true)
             rm -f "${RETAG_ERR}"
 
             if [ "${RETAG_OK}" == "true" ]; then
-              if [ "${IS_PRERELEASE}" == "false" ]; then
+              if [ "${TAG_LATEST}" == "true" ]; then
                 echo "Promoted ${SOURCE} → ${NEW_TAG} + :latest via ${RETAG_METHOD}"
               else
                 echo "Promoted ${SOURCE} → ${NEW_TAG} via ${RETAG_METHOD}"
               fi
               PROMOTED="true"
               echo promoted >> "${COUNTS_FILE}"
+            elif [ -n "${PROMOTE_SOURCE_TAG}" ]; then
+              # The one place a promotion parts ways with every other retag.
+              # The fallback below builds from source, and a fresh build is
+              # not the artifact that was tested: shipping it under the stable
+              # tag would be exactly what promote-from exists to rule out. The
+              # stable git tag is already pushed at this point, which is why a
+              # re-run resumes instead of reporting nothing to release.
+              RETAG_WHY="${RETAG_DETAIL:-no error output}"
+              if [ "${RETAG_METHOD}" != "imagetools" ]; then
+                RETAG_WHY="see the docker pull/tag/push output above"
+              fi
+              echo "::error::promote-from: could not retag ${SOURCE} as ${NEW_TAG} (last method: ${RETAG_METHOD}): ${RETAG_WHY}. A promotion never rebuilds, so nothing was published for this image. Fix the cause and re-run: the promotion resumes from the ${TAG} tag that is already pushed."
+              exit 1
             else
               echo "::warning::retag of ${SOURCE} → ${NEW_TAG} failed (last method: ${RETAG_METHOD}); falling back to fresh build."
             fi
@@ -2837,6 +3122,8 @@ runs:
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
         NORMALIZE_VERSION: ${{ steps.normalize.outputs.version }}
         NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
+        PROMOTE_COMMIT: ${{ steps.promote-source.outputs.commit }}
+        WORKFLOW_SHA: ${{ github.sha }}
       run: |
         set -euo pipefail
 
@@ -2864,8 +3151,21 @@ runs:
         printf '%s' "${IMAGE_REFS}"
         IMAGE_REFS="${IMAGE_REFS}" "${GITHUB_ACTION_PATH}/scripts/sign-image.sh"
 
+        # See the condition on the attest step below.
+        if [ -n "${PROMOTE_COMMIT}" ] && [ "${PROMOTE_COMMIT}" != "${WORKFLOW_SHA}" ]; then
+          echo "::warning::promote-from: the image is signed, but no SLSA build provenance is attested on this run. The attestation would name ${WORKFLOW_SHA}, the commit this workflow was started on, and the image was built from ${PROMOTE_COMMIT}. A retag keeps the prerelease's digest, so any provenance attested when that prerelease was cut still applies. Start the workflow from the prerelease tag to attest it again."
+        fi
+
+    # Not on a promotion started from some other commit. The attestation
+    # records the commit of the WORKFLOW run as the source the subject was built
+    # from. On an ordinary release that is the release commit. On a promotion
+    # it is wherever the workflow was dispatched, and the image was built from
+    # the prerelease's commit: attesting would publish provenance that names
+    # the wrong source, which is worse than none. When the two are the same
+    # commit (the workflow was started from the prerelease tag) it is attested
+    # as usual.
     - name: Attest build provenance (SLSA)
-      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-sign == 'true' && steps.sign-image.outputs.primary_digest != ''
+      if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-sign == 'true' && steps.sign-image.outputs.primary_digest != '' && (steps.promote-source.outputs.commit == '' || steps.promote-source.outputs.commit == github.sha)
       uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
       with:
         subject-name: ${{ steps.sign-image.outputs.primary_subject }}
@@ -3037,6 +3337,8 @@ runs:
         NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
         NORMALIZE_RELEASE_NOTES: ${{ steps.normalize.outputs.release_notes }}
         DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        PROMOTE_PREVIOUS_TAG: ${{ steps.promote-source.outputs.previous_tag }}
+        PROMOTE_TAG_LATEST: ${{ steps.promote-source.outputs.tag_latest }}
       run: |
         set -euo pipefail
         TAG="${NORMALIZE_TAG}"
@@ -3060,8 +3362,25 @@ runs:
         # range. Using an array avoids word-splitting the notes string.
         NOTES="${NORMALIZE_RELEASE_NOTES}"
         NOTES_FLAGS=(--generate-notes)
+        # A promotion pins the range to the previous stable version. Left to
+        # pick its own starting point, GitHub can land on the prerelease this
+        # version was promoted from, which is the same commit: an empty
+        # changelog on the one release people actually read. Empty on a first
+        # stable release, where there is nothing earlier to start from.
+        if [ -n "${PROMOTE_PREVIOUS_TAG}" ]; then
+          NOTES_FLAGS+=(--notes-start-tag "${PROMOTE_PREVIOUS_TAG}")
+        fi
         if [ -n "${NOTES}" ]; then
           NOTES_FLAGS=(--notes "${NOTES}")
+        fi
+        # The rule the `:latest` image tag follows, applied to GitHub's own
+        # "Latest" marker: a fix promoted on an older release line is not the
+        # latest release. Every other run leaves the marker to GitHub. A plain
+        # string like PRE_FLAG, not an array: an empty array under `set -u` is
+        # an unbound variable on the bash 3.2 that macOS runners ship.
+        LATEST_FLAG=""
+        if [ "${PROMOTE_TAG_LATEST}" == "false" ]; then
+          LATEST_FLAG="--latest=false"
         fi
         # Retry the release create to absorb transient GitHub API hiccups
         # (5xx, rate limits, propagation lag for the tag we just pushed).
@@ -3074,7 +3393,7 @@ runs:
           if gh release create "${TAG}" \
                --title "${TAG}" \
                "${NOTES_FLAGS[@]}" \
-               ${PRE_FLAG} 2>/tmp/release_create.err; then
+               ${PRE_FLAG} ${LATEST_FLAG} 2>/tmp/release_create.err; then
             echo "Published GitHub Release ${TAG} on attempt ${attempt}/${MAX_ATTEMPTS}."
             exit 0
           fi
@@ -3377,11 +3696,13 @@ runs:
         # never happened. `release` mode already keys off `released`.
         BUILD_OUTCOME: ${{ steps.build-pr-image.outcome }}
         AUTO_MERGE_OUTCOME: ${{ steps.enable-auto-merge.outcome }}
+        PROMOTE_OUTCOME: ${{ steps.promote-images.outcome }}
         VERSION: ${{ steps.normalize.outputs.version || steps.release-version.outputs.version || steps.version-override.outputs.version }}
         TAG: ${{ steps.normalize.outputs.tag || steps.release-version.outputs.tag || steps.version-override.outputs.tag }}
         ENVIRONMENT: ${{ steps.detect-env.outputs.environment }}
         IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
         RELEASED: ${{ steps.normalize.outputs.released }}
+        PROMOTED_FROM: ${{ steps.promote-source.outputs.source_tag }}
         VERSIONING_TOOL: ${{ steps.resolve-tool.outputs.tool }}
         REGISTRY: ${{ inputs.registry }}
         OWNER: ${{ github.repository_owner }}

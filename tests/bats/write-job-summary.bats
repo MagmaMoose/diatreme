@@ -177,6 +177,7 @@ no_line() {
   ! grep -q "^| Environment |" "${GITHUB_STEP_SUMMARY}"
   ! grep -q "^| Prerelease |" "${GITHUB_STEP_SUMMARY}"
   ! grep -q "^| Versioning tool |" "${GITHUB_STEP_SUMMARY}"
+  ! grep -q "^| Promoted from |" "${GITHUB_STEP_SUMMARY}"
   ! grep -q "^| Image |" "${GITHUB_STEP_SUMMARY}"
   ! grep -q "^| Images promoted" "${GITHUB_STEP_SUMMARY}"
   ! grep -q "^| Version files updated |" "${GITHUB_STEP_SUMMARY}"
@@ -191,6 +192,44 @@ no_line() {
   [ "$status" -eq 0 ]
   no_line "| Prerelease | no |"
   no_line "| Package published | no |"
+}
+
+# ── promote-from ────────────────────────────────────────────────────────────
+
+@test "a promotion names the prerelease it released as stable" {
+  # No versioning tool produced this version, so without the row the summary
+  # would show a stable release and nothing about where it came from.
+  run env MODE=release VERSION=1.5.0 TAG=v1.5.0 ENVIRONMENT=prod RELEASED=true \
+    PROMOTED_FROM=v1.5.0-rc.3 "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '| Promoted from | `v1.5.0-rc.3` |'
+  run grep -q "^| Versioning tool |" "${GITHUB_STEP_SUMMARY}"
+  [ "$status" -ne 0 ]
+  has_line '✅ Released `v1.5.0` to `prod`.'
+}
+
+@test "a tagged release whose image promote failed is not reported as released" {
+  # RELEASED is settled when the tag is cut, before the image is promoted. A
+  # promotion has no rebuild to fall back on, so it can fail right there, and
+  # "Released v1.5.0" would be the summary claiming the one thing that did
+  # not happen.
+  run env MODE=release VERSION=1.5.0 TAG=v1.5.0 ENVIRONMENT=prod RELEASED=true \
+    PROMOTED_FROM=v1.5.0-rc.3 PROMOTE_OUTCOME=failure "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '> ❌ **Run did not complete** — `v1.5.0` was tagged, but promoting its image failed. See the failing step above.'
+  run grep -q '✅' "${GITHUB_STEP_SUMMARY}"
+  [ "$status" -ne 0 ]
+}
+
+@test "a promote that succeeded, was skipped or never ran leaves the verdict alone" {
+  local outcome
+  for outcome in success skipped ""; do
+    : > "${GITHUB_STEP_SUMMARY}"
+    run env MODE=release VERSION=1.5.0 TAG=v1.5.0 ENVIRONMENT=prod RELEASED=true \
+      PROMOTE_OUTCOME="${outcome}" "${SCRIPT}"
+    [ "$status" -eq 0 ]
+    has_line '✅ Released `v1.5.0` to `prod`.'
+  done
 }
 
 # ── promote tallies ─────────────────────────────────────────────────────────

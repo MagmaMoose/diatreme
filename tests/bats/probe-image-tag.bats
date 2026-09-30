@@ -168,3 +168,44 @@ teardown() {
   [ "$status" -eq 1 ]
   [ ! -s "${STUB_LOG}" ]
 }
+
+# ── VERDICT_FILE: telling "not there" from "would not say" ──────────────────
+# The exit code folds absent and indeterminate together because the skip gate
+# must treat them alike. The `promote-from` preflight must not: a missing
+# source image stops a promotion, an unreachable registry does not.
+
+@test "VERDICT_FILE says present when the tag resolves" {
+  run env IMAGE_REF="ghcr.io/acme/app:v1.2.3" STUB_MANIFEST="${DIGEST}" \
+      VERDICT_FILE="${WORK}/verdict" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [ "$(cat "${WORK}/verdict")" = "present" ]
+}
+
+@test "VERDICT_FILE says absent on a not-found answer" {
+  run env IMAGE_REF="ghcr.io/acme/app:v1.2.3" \
+      STUB_DOCKER_ERR="ERROR: ghcr.io/acme/app:v1.2.3: not found" \
+      VERDICT_FILE="${WORK}/verdict" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK}/verdict")" = "absent" ]
+}
+
+@test "VERDICT_FILE says unknown on a registry fault" {
+  run env IMAGE_REF="ghcr.io/acme/app:v1.2.3" \
+      STUB_DOCKER_ERR="ERROR: unauthorized: authentication required" \
+      VERDICT_FILE="${WORK}/verdict" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK}/verdict")" = "unknown" ]
+}
+
+@test "VERDICT_FILE says unknown when the reply is not a digest" {
+  run env IMAGE_REF="ghcr.io/acme/app:v1.2.3" STUB_MANIFEST="unknown flag: --format" \
+      VERDICT_FILE="${WORK}/verdict" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK}/verdict")" = "unknown" ]
+}
+
+@test "VERDICT_FILE says unknown when IMAGE_REF is missing" {
+  run env -u IMAGE_REF VERDICT_FILE="${WORK}/verdict" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [ "$(cat "${WORK}/verdict")" = "unknown" ]
+}

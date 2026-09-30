@@ -32,8 +32,15 @@
 #   IMAGE_REF   - fully-qualified ref to probe, e.g. ghcr.io/acme/app:v1.2.3.
 #
 # Optional env:
-#   DIGEST_FILE - path to write the resolved manifest digest to on success.
-#                 Written only on exit 0, and always a complete `sha256:…`.
+#   DIGEST_FILE  - path to write the resolved manifest digest to on success.
+#                  Written only on exit 0, and always a complete `sha256:…`.
+#   VERDICT_FILE - path to write one word to: `present`, `absent` or `unknown`.
+#                  The exit code folds the last two together on purpose: the
+#                  skip gate must treat "not there" and "would not say" alike.
+#                  The `promote-from` preflight must not. There a missing
+#                  source image stops the promotion before anything is tagged,
+#                  while a registry that would not answer is left for the
+#                  retag to settle. That caller reads the difference here.
 #
 # Exit codes:
 #   0 - the tag resolves to a manifest, whose digest is in DIGEST_FILE.
@@ -45,9 +52,15 @@ set -euo pipefail
 
 IMAGE_REF="${IMAGE_REF:-}"
 DIGEST_FILE="${DIGEST_FILE:-}"
+VERDICT_FILE="${VERDICT_FILE:-}"
+
+verdict() {
+  [ -z "${VERDICT_FILE}" ] || printf '%s' "$1" > "${VERDICT_FILE}"
+}
 
 if [ -z "${IMAGE_REF}" ]; then
   echo "::warning::probe-image-tag: IMAGE_REF is required — cannot probe; treating the tag as absent."
+  verdict unknown
   exit 1
 fi
 
@@ -65,6 +78,7 @@ if [ "${STATUS}" -eq 0 ]; then
   if printf '%s' "${DIGEST}" | grep -qE '^sha256:[0-9a-f]{64}$'; then
     echo "probe-image-tag: ${IMAGE_REF} resolves to ${DIGEST}."
     [ -z "${DIGEST_FILE}" ] || printf '%s' "${DIGEST}" > "${DIGEST_FILE}"
+    verdict present
     exit 0
   fi
   OUTPUT="the registry returned no usable manifest digest for ${IMAGE_REF} (got '${OUTPUT}')"
@@ -76,6 +90,7 @@ fi
 # both outcomes return 1 either way.
 if printf '%s' "${OUTPUT}" | grep -qiE 'not found|not_found|manifest unknown|manifest_unknown|no such manifest|name unknown|name_unknown|404'; then
   echo "probe-image-tag: ${IMAGE_REF} is not in the registry."
+  verdict absent
   exit 1
 fi
 
@@ -84,4 +99,5 @@ fi
 DETAIL="${OUTPUT//$'\n'/ }"
 [ -n "${DETAIL}" ] || DETAIL="the registry returned an empty manifest"
 echo "::warning::probe-image-tag: could not determine whether ${IMAGE_REF} exists (${DETAIL}) — proceeding as if it does not."
+verdict unknown
 exit 1
