@@ -205,6 +205,7 @@ if [ -n "${newer}" ]; then
 fi
 
 # ── The body ────────────────────────────────────────────────────────────────
+# shellcheck disable=SC2016 # the backticks are Markdown code spans, not command substitution.
 {
   printf 'Deploys `%s` to **%s** by moving `%s`:\n\n' "${TAG}" "${NAME}" "${FILE}"
   printf '| Image | Now | After merge |\n| --- | --- | --- |\n'

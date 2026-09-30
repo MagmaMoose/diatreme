@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # A `gh` stub with just enough GitHub in it for the deploy PR scripts:
 # branches, file contents at a ref, open pull requests, and the writes the
 # scripts make. Loaded by the deploy-pr suites with `load deploy-pr-stub`.
