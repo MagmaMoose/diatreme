@@ -11,6 +11,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Deploy PRs (`deploy-pr-targets`, `mode: deploy-promote`).** Put every deployment
+  behind a merge instead of letting image automation commit tags to the branch the
+  cluster reads. After a release, Diatreme opens a pull request moving `newTag` for the
+  released images in the first kustomize overlay of that environment's list; when it
+  merges, `mode: deploy-promote` opens the same change for the next overlay, so prd only
+  ever gets what acc ran. One open PR per overlay (a newer tag supersedes it, an overlay
+  is never moved backwards), only the `newTag` value changes, and a PR that only moves
+  tags skips the `mode: ci` image build. A push that changes nothing but the overlays is
+  refused before versioning, so a deploy merge can never cut another release. New
+  inputs `deploy-pr-base` and `deploy-pr-branch-prefix`, new output `deploy-pr`. See
+  docs/how-to/deploy-through-pull-requests.md.
+
 - **Broker fallback URL (`token-broker-fallback-url`).** A broker hostname losing
   egress blocks releases in every repository pinned to every published version, and
   no change we ship can redirect those pins — so the fallback has to travel with the
