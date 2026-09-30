@@ -25,6 +25,12 @@ does not duplicate them so they cannot drift.
   with:
     mode: enable-auto-merge
     pr-number: ${{ github.event.pull_request.number }}
+
+# When a deploy PR merges, open the one for the next overlay (pull_request: closed)
+- uses: MagmaMoose/diatreme@v2
+  with:
+    mode: deploy-promote
+    deploy-pr-targets: '{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'
 ```
 
 ## Versioning-tool detection
@@ -203,6 +209,45 @@ so start the workflow from the prerelease tag if you use either.
 The full walkthrough, including a complete workflow and what each refusal means,
 is in
 [Promoting a release candidate to stable](how-to/promote-a-release-candidate.md).
+
+## Deploying by pull request
+
+`deploy-pr-targets` turns a release into a pull request against your GitOps
+overlays instead of a tag that image automation picks up on its own. Name the
+kustomize overlays each environment deploys to, in the order a release moves
+through them:
+
+```yaml
+- uses: MagmaMoose/diatreme@v2
+  with:
+    mode: ${{ github.event_name == 'pull_request' && (github.event.action == 'closed' && 'deploy-promote' || 'ci') || 'release' }}
+    deploy-pr-targets: '{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'
+```
+
+- **A release opens one PR, for the first overlay.** It moves `newTag` for every
+  image the release promoted, on a branch of its own
+  (`deploy/acc/v1.2.19`), and touches nothing else in the file: a trailing
+  comment such as a Flux `$imagepolicy` marker stays where it is.
+- **A merge opens the next.** `mode: deploy-promote`, on the `pull_request`
+  `closed` event, sees the merged `deploy/acc/...` PR and opens the same tags
+  for `prd`. What it carries is what the merge changed in `acc`, so `prd` only
+  ever gets a build `acc` has run.
+- **Merging is the deployment.** Nothing reaches an overlay without a merge, so
+  review, required checks and the branch's rules all apply to deploys.
+- **One open PR per overlay.** A newer tag supersedes the open PR, an overlay
+  that already runs the tag gets none, and an overlay is never moved backwards.
+
+Three things are required of the workflow, and the how-to explains each:
+authenticate with an App (`public-app` or `private-app`), because a PR opened
+with `GITHUB_TOKEN` starts no workflow and its required checks never report;
+add the overlays to the push trigger's `paths-ignore`, because merging a deploy
+PR must not cut a release (Diatreme refuses the run if it would); and include
+`closed` in the `pull_request` types, or nothing is promoted past the first
+overlay. On a pull request that only moves tags, `mode: ci` skips the image
+build.
+
+The complete workflow is in
+[Deploying through pull requests](how-to/deploy-through-pull-requests.md).
 
 ## Who may cut a release
 

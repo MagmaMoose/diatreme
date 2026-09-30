@@ -21,6 +21,11 @@ production deployment is the Python/Lambda broker in `broker/` running on AWS
 Lambda. The TypeScript Cloudflare Worker in `worker/` serves as the code of
 record and rollback target, but is not currently serving any hostname.
 
+**Deploy PR.** A pull request Diatreme opens to move the released images'
+`newTag` in one kustomize overlay, on a branch `deploy/<overlay>/<tag>`.
+Merging it is the deployment. See `deploy-pr-targets` and `mode:
+deploy-promote`.
+
 **Fallback broker.** The secondary hostname the action retries when the primary
 is unreachable or returns 5xx. Never tried on 4xx, because a rejected token is
 an answer, not an outage.
@@ -38,6 +43,10 @@ signed it. `kid_not_found` means the broker's cached key set didn't contain it.
 **OIDC token.** The short-lived JWT a GitHub Actions job can mint about itself,
 carrying claims like `repository`, `ref` and `sha`. Requires `id-token: write`.
 Proof of which repository is asking, and the input to `/token`.
+
+**Overlay.** A kustomize directory an environment is applied from, e.g.
+`k8s/overlays/prd`. In `deploy-pr-targets` it is named by its last path
+segment.
 
 **Promotion.** Retagging an already-built image as a release version instead of
 rebuilding it. Two kinds. On an ordinary release Diatreme promotes the `pr-<N>`

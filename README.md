@@ -65,6 +65,9 @@ no token to rotate.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs and native
   auto-merge, or promote the release candidate QA signed off to stable by tag: same
   commit, same image, never a rebuild.
+- **GitOps deploys by pull request** — after a release, a PR moves the image tag in your
+  first kustomize overlay; merging it deploys and opens the same PR for the next one
+  (acc → prd). No image automation committing straight to the branch the cluster reads.
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
@@ -79,20 +82,22 @@ flowchart LR
   D -->|packages| P[npm · NuGet · Maven · Gradle · pip · gem]
   I --> DT[(Dependency-Track)]
   I --> DD[(DefectDojo)]
+  I --> G[Deploy PR: acc → merge → prd]
 ```
 
 ## Most-used inputs
 
 | Input | Default | What it does |
 | --- | --- | --- |
-| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge`. |
+| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge` · `deploy-promote`. |
 | `auth-mode` | `public-app` | Token source. The default uses the hosted App and needs only `id-token: write`. |
 | `versioning-tool` | `auto` | Detected from repo markers; override to pin one. |
 | `environment` | — | The environment this run releases to. |
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
+| `deploy-pr-targets` | — | Kustomize overlays a release is deployed to, in order: a PR for the first, the next on each merge. |
 
-All 101 inputs and every output →
+All 104 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation

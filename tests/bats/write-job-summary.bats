@@ -342,3 +342,51 @@ no_line() {
   has_line '📋 Auto-merge was not enabled on #42.'
   ! grep -q '✅' "${GITHUB_STEP_SUMMARY}"
 }
+
+# ── deploy PRs ───────────────────────────────────────────────────────────────
+
+@test "a release that opened a deploy PR shows it as a row" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=release VERSION=1.2.19 TAG=v1.2.19 RELEASED=true PROMOTE_OUTCOME=success \
+    DEPLOY_PR_URL=https://ghe.example/octo/app/pull/42 DEPLOY_PR_RESULT=created "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '| Deploy PR | https://ghe.example/octo/app/pull/42 (created) |'
+}
+
+@test "a deploy PR that was not needed shows why, without a link" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=release VERSION=1.2.19 TAG=v1.2.19 RELEASED=true DEPLOY_PR_RESULT=unchanged "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '| Deploy PR | unchanged |'
+}
+
+@test "a ci run that skipped the build for a deploy-only PR says so" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=ci REGISTRY=ghcr.io OWNER=owner IMAGE_NAME=app PR_NUMBER=42 DEPLOY_ONLY=true "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '📋 Deploy-only change — it moves tags in the deploy overlays, so there is no image to build.'
+}
+
+@test "deploy-promote reports the PR it opened" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=deploy-promote PR_NUMBER=31 DEPLOY_PROMOTE_OUTCOME=success \
+    DEPLOY_PR_URL=https://ghe.example/octo/app/pull/43 DEPLOY_PR_RESULT=created "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '**Mode:** `deploy-promote` · **Merged PR:** `#31`'
+  has_line '✅ Opened the next deploy PR: https://ghe.example/octo/app/pull/43'
+}
+
+@test "deploy-promote with nothing to do makes no success claim" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=deploy-promote PR_NUMBER=31 DEPLOY_PROMOTE_OUTCOME=success "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '📋 Nothing to promote — not a merged deploy PR, or the last overlay in its list.'
+  ! grep -q '✅' "${GITHUB_STEP_SUMMARY}"
+}
+
+@test "a failed deploy-promote reports the failure" {
+  run env GITHUB_STEP_SUMMARY="${GITHUB_STEP_SUMMARY}" \
+    MODE=deploy-promote PR_NUMBER=31 DEPLOY_PROMOTE_OUTCOME=failure "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '> ❌ **Run did not complete** — the next deploy PR could not be opened. See the failing step above.'
+}
