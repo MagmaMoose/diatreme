@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
-# check-deploy-only-change.sh: when a change counts as nothing but deploy
-# overlays, for the ci build skip (detect) and the release refusal (guard).
+# check-deploy-only-change.sh: when a change counts as nothing but the
+# deploy-paths, for the ci build skip (detect) and the release refusal (guard).
 
 SCRIPT="${BATS_TEST_DIRNAME}/../../scripts/check-deploy-only-change.sh"
 
@@ -12,7 +12,7 @@ setup() {
   export GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/output"
   : > "${GITHUB_OUTPUT}"
   export GH_TOKEN=fake REPO_FULL=octo/app CHECK=detect
-  export DEPLOY_PR_TARGETS='{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'
+  export DEPLOY_PATHS='["./k8s/overlays/acc/", "k8s/overlays/prd"]'
 }
 
 pr_files() { printf '%s\n' "$@" | jq -R '{filename: .}' | jq -s . > "${STATE}/pr-files.json"; }
@@ -78,4 +78,13 @@ pr_files() { printf '%s\n' "$@" | jq -R '{filename: .}' | jq -s . > "${STATE}/pr
   CHECK=guard EVENT_NAME=push BEFORE=aaa AFTER=bbb run "${SCRIPT}"
   [ "$status" -eq 0 ]
   [ "$(output_of deploy_only)" = "false" ]
+}
+
+@test "deploy-paths that are not a list of relative directories stop the run" {
+  pr_files k8s/overlays/acc/kustomization.yaml
+  for bad in '' '{"prod": ["k8s/overlays/acc"]}' '[]' '["/k8s"]' '["k8s/../x"]'; do
+    DEPLOY_PATHS="${bad}" EVENT_NAME=pull_request PR_NUMBER=5 run "${SCRIPT}"
+    [ "$status" -eq 1 ] || { echo "accepted: ${bad}"; false; }
+    [[ "$output" == *"::error::"*"deploy-paths"* ]]
+  done
 }
