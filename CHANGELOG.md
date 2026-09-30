@@ -11,17 +11,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Deploy PRs (`deploy-pr-targets`, `mode: deploy-promote`).** Put every deployment
-  behind a merge instead of letting image automation commit tags to the branch the
-  cluster reads. After a release, Diatreme opens a pull request moving `newTag` for the
-  released images in the first kustomize overlay of that environment's list; when it
-  merges, `mode: deploy-promote` opens the same change for the next overlay, so prd only
-  ever gets what acc ran. One open PR per overlay (a newer tag supersedes it, an overlay
-  is never moved backwards), only the `newTag` value changes, and a PR that only moves
-  tags skips the `mode: ci` image build. A push that changes nothing but the overlays is
-  refused before versioning, so a deploy merge can never cut another release. New
-  inputs `deploy-pr-base` and `deploy-pr-branch-prefix`, new output `deploy-pr`. See
-  docs/how-to/deploy-through-pull-requests.md.
+- **`deploy-paths`.** The directories deploy PRs write (the kustomize overlays Tremvok's
+  `gitops-pr` moves image tags in). `mode: ci` skips the image build and scan for a pull
+  request that changes nothing outside them and still reports its check; `mode: release`
+  refuses a push that changes nothing outside them before anything is tagged, so merging a
+  deploy PR can never cut another release.
+
+### Removed
+
+- **`deploy-pr-targets`, `deploy-pr-base`, `deploy-pr-branch-prefix`, `mode: deploy-promote`
+  and the `deploy-pr` output**, released in v2.18.0 and adopted nowhere. Opening deploy PRs
+  changes what an environment runs, which is the deploy side's job: it is Tremvok's
+  `gitops-pr` target now, started by the GitHub Release Diatreme publishes. The two guards that
+  belong to the release side stay here as `deploy-paths`.
 
 - **Broker fallback URL (`token-broker-fallback-url`).** A broker hostname losing
   egress blocks releases in every repository pinned to every published version, and

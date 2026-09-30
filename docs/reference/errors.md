@@ -116,6 +116,8 @@ These come from the action's own scripts, before or instead of a broker call.
 | `OIDC request environment is unavailable. Grant 'id-token: write' to this job.` | The job has no OIDC permission, so no token can be minted at all. | Add `permissions: id-token: write` to the job. See [Setup](../setup.md#required-permissions). |
 | `GITHUB_REPOSITORY must be owner/repo.` | The environment variable is missing or malformed. | Only reachable outside a normal Actions run. |
 | `Token broker request failed with HTTP <status>: <error>` | The broker answered non-200. | Find the `error` and `reason` in the tables above. |
+| `deploy-paths must be a JSON array of directories` | `deploy-paths` is not a JSON array of relative directories. Checked before anything is tagged. | Fix the value, e.g. `["k8s/overlays/acc", "k8s/overlays/prd"]`. |
+| `This push changes nothing but deploy-paths` | A deploy PR merged into a branch whose push trigger does not ignore those directories. Nothing was tagged. | Add them to the push trigger's `paths-ignore`. |
 
 ### `promote-from` refusals
 
@@ -148,25 +150,6 @@ already holds the stable tag and it is not this promotion's:
 | `Tag <tag> already exists on remote on the commit being released, but it is not this release` | The tag on the remote does not record this prerelease as its source. | Cut a new version. |
 
 See [Promoting a release candidate to stable](../how-to/promote-a-release-candidate.md).
-
-### Deploy PR refusals
-
-From `deploy-pr-targets` and `mode: deploy-promote`. The first two stop a
-release before anything is tagged; the rest stop the deploy PR, after the
-release itself has gone out.
-
-| Message | Cause | Fix |
-| --- | --- | --- |
-| `deploy-pr-targets: ...` | The value is not a JSON object of environment to a non-empty list of relative directories, names an environment missing from `environments`, lists an overlay twice, or gives two overlays the same last path segment. | Fix the value. |
-| `This push changes nothing but deploy overlays` | A deploy PR merged into a branch whose push trigger does not ignore the overlays; releasing it would open a deploy PR for the new version in turn. | Add the overlays to the push trigger's `paths-ignore`. |
-| `no kustomization.yaml, kustomization.yml or Kustomization in <overlay>` | The overlay directory has no kustomization file on the base branch. | Check the path, and `deploy-pr-base`. |
-| `has an images[] entry for none of: ...` | The overlay names none of the images the release promoted. The message lists both sides. | Match the entry's `name` (or `newName`) to the released repository. |
-| `pins <image> by digest, which outranks newTag` | Moving the tag would change nothing that is deployed. | Remove the `digest`. |
-| `has no newTag to move` | The entry has no `newTag` line. | Add one. |
-| `only a block-style 'newTag: <tag>' line is supported` | The entry is written in flow style. | Write it as a block. |
-| `mode deploy-promote runs on a pull_request event, or needs pr-number` | The workflow runs deploy-promote on another event. | Run it on `pull_request` `closed`, or pass `pr-number`. |
-
-See [Deploying through pull requests](../how-to/deploy-through-pull-requests.md).
 
 ## Getting more detail
 
