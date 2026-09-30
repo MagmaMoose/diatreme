@@ -29,7 +29,7 @@
 # as one report rather than three dialects.
 #
 # Env — all optional; an absent value drops its row:
-#   MODE                    ci | release | enable-auto-merge | deploy-promote.
+#   MODE                    ci | release | enable-auto-merge.
 #   VERSION, TAG            released version and its git tag.
 #   ENVIRONMENT             resolved target environment.
 #   IS_PRERELEASE           "true"/"false".
@@ -66,14 +66,8 @@
 #                           happens — so without an outcome the summary would
 #                           claim a push, or an enabled auto-merge, on runs
 #                           where the step failed. Absent ⇒ no success claim.
-#   DEPLOY_PR_URL,          the deploy PR a release or deploy-promote run
-#   DEPLOY_PR_RESULT        opened or refreshed, and what the helper did:
-#                           created | refreshed | unchanged | skipped.
-#   DEPLOY_PROMOTE_OUTCOME  the `steps.<id>.outcome` of deploy-promote, for the
-#                           same reason as BUILD_OUTCOME: no result is not
-#                           "nothing to promote" when the step failed.
 #   DEPLOY_ONLY             "true" when a ci run skipped the image build
-#                           because the PR changes nothing but deploy overlays.
+#                           because the PR changes nothing but deploy-paths.
 #   GITHUB_STEP_SUMMARY     file to append to. Unset/empty ⇒ silent no-op,
 #                           which is also what makes this testable.
 #
@@ -112,9 +106,6 @@ AUTO_MERGE_METHOD="${AUTO_MERGE_METHOD:-}"
 BUILD_OUTCOME="${BUILD_OUTCOME:-}"
 AUTO_MERGE_OUTCOME="${AUTO_MERGE_OUTCOME:-}"
 PROMOTE_OUTCOME="${PROMOTE_OUTCOME:-}"
-DEPLOY_PR_URL="${DEPLOY_PR_URL:-}"
-DEPLOY_PR_RESULT="${DEPLOY_PR_RESULT:-}"
-DEPLOY_PROMOTE_OUTCOME="${DEPLOY_PROMOTE_OUTCOME:-}"
 DEPLOY_ONLY="${DEPLOY_ONLY:-}"
 
 LINES=()      # the rendered document, one Markdown line per entry
@@ -227,7 +218,7 @@ status_line() {
       if [ "${BUILD_OUTCOME}" = "failure" ]; then
         printf '> ❌ **Run did not complete** — the image build failed. See the failing step above.'
       elif [ "${DEPLOY_ONLY}" = "true" ]; then
-        printf '📋 Deploy-only change — it moves tags in the deploy overlays, so there is no image to build.'
+        printf '📋 Deploy-only change — it moves tags in the deploy-paths, so there is no image to build.'
       elif [ "${BUILD_OUTCOME}" = "success" ] && [ -n "${IMAGE_REF}" ]; then
         printf "✅ Pushed \`%s\`." "${IMAGE_REF}"
       elif [ -n "${IMAGE_REF}" ]; then
@@ -250,21 +241,6 @@ status_line() {
         printf "✅ Auto-merge (\`%s\`) enabled on %s." "${AUTO_MERGE_METHOD}" "${target}"
       else
         printf '✅ Auto-merge enabled on %s.' "${target}"
-      fi
-      ;;
-    deploy-promote)
-      if [ "${DEPLOY_PROMOTE_OUTCOME}" = "failure" ]; then
-        printf '> ❌ **Run did not complete** — the next deploy PR could not be opened. See the failing step above.'
-      elif [ "${DEPLOY_PR_RESULT}" = "created" ] && [ -n "${DEPLOY_PR_URL}" ]; then
-        printf '✅ Opened the next deploy PR: %s' "${DEPLOY_PR_URL}"
-      elif [ "${DEPLOY_PR_RESULT}" = "refreshed" ] && [ -n "${DEPLOY_PR_URL}" ]; then
-        printf '✅ Refreshed the next deploy PR: %s' "${DEPLOY_PR_URL}"
-      elif [ "${DEPLOY_PR_RESULT}" = "unchanged" ]; then
-        printf '📋 The next overlay already runs these tags — no deploy PR needed.'
-      elif [ "${DEPLOY_PR_RESULT}" = "skipped" ]; then
-        printf '📋 No deploy PR opened — the next overlay already has a newer one, or runs a newer tag.'
-      else
-        printf '📋 Nothing to promote — not a merged deploy PR, or the last overlay in its list.'
       fi
       ;;
     *)
@@ -301,9 +277,6 @@ case "${MODE}" in
     fact "PR" "${PR_NUMBER:+#${PR_NUMBER}}"
     fact "Method" "${AUTO_MERGE_METHOD}"
     ;;
-  deploy-promote)
-    fact "Merged PR" "${PR_NUMBER:+#${PR_NUMBER}}"
-    ;;
 esac
 if [ -n "${HEADLINE}" ]; then
   emit "${HEADLINE}"
@@ -329,11 +302,6 @@ if [ -n "${IMAGE_FINDINGS}" ] || [ "${IMAGE_SCANNED}" = "true" ]; then
   row "Scan findings${IMAGE_SCAN_SEVERITY:+ (${IMAGE_SCAN_SEVERITY})}" "${IMAGE_FINDINGS:-0}"
 fi
 row "Images signed" "${IMAGES_SIGNED}"
-if [ -n "${DEPLOY_PR_URL}" ]; then
-  row "Deploy PR" "${DEPLOY_PR_URL}${DEPLOY_PR_RESULT:+ (${DEPLOY_PR_RESULT})}"
-else
-  row "Deploy PR" "${DEPLOY_PR_RESULT}"
-fi
 
 if [ "${#ROWS[@]}" -gt 0 ]; then
   emit "| Metric | Value |"

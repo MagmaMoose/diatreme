@@ -9,7 +9,7 @@ action.
 ```mermaid
 flowchart LR
     subgraph runner["GitHub Actions runner"]
-        A["action.yml<br/>mode: ci / release / enable-auto-merge / deploy-promote"]
+        A["action.yml<br/>mode: ci / release / enable-auto-merge"]
         S["scripts/*.sh"]
         A --> S
     end
@@ -51,11 +51,7 @@ in `scripts/*.sh`, which are `bats`-tested. Three modes:
   With `promote-from` it releases a named prerelease as its stable version
   instead: it checks out the prerelease's commit, confirms the source image
   exists before tagging, retags it, and never rebuilds.
-  With `deploy-pr-targets` it then opens a deploy PR that moves the released
-  images' `newTag` in the first kustomize overlay the environment deploys to.
 - **`enable-auto-merge`**: enable native GitHub auto-merge for a specific PR.
-- **`deploy-promote`**: on a closed pull request, when it was a merged deploy PR,
-  open the deploy PR for the next overlay with the tags the merge moved.
 
 **Versioning backends** are selected by `versioning-tool` (default `auto`, which
 detects from repository markers): `semantic-release-python`, `semantic-release-npm`,

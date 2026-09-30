@@ -63,7 +63,7 @@ no token to rotate.
 - **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
   Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs, a signed-off
-  RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs, acc → prd.
+  RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs with Tremvok.
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
@@ -84,14 +84,14 @@ flowchart LR
 
 | Input | Default | What it does |
 | --- | --- | --- |
-| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge` · `deploy-promote`. |
+| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge`. |
 | `auth-mode` | `public-app` | Token source. The default uses the hosted App and needs only `id-token: write`. |
 | `versioning-tool` | `auto` | Detected from repo markers; override to pin one. |
 | `environment` | — | The environment this run releases to. |
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 104 inputs and every output →
+All 101 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation

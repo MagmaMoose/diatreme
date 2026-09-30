@@ -25,12 +25,6 @@ does not duplicate them so they cannot drift.
   with:
     mode: enable-auto-merge
     pr-number: ${{ github.event.pull_request.number }}
-
-# When a deploy PR merges, open the one for the next overlay (pull_request: closed)
-- uses: MagmaMoose/diatreme@v2
-  with:
-    mode: deploy-promote
-    deploy-pr-targets: '{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'
 ```
 
 ## Versioning-tool detection
@@ -212,42 +206,40 @@ is in
 
 ## Deploying by pull request
 
-`deploy-pr-targets` turns a release into a pull request against your GitOps
-overlays instead of a tag that image automation picks up on its own. Name the
-kustomize overlays each environment deploys to, in the order a release moves
-through them:
+Diatreme releases; opening the pull requests that deploy a release to GitOps overlays is
+Tremvok's `gitops-pr` target. It starts from the GitHub Release Diatreme publishes (after the
+image is in the registry), opens a PR moving the image tag in the first overlay, and opens the
+next overlay's when that one merges. See
+[Tremvok's setup for `gitops-pr`](https://docs.magmamoose.com/tremvok/setup/#gitops-pr).
+
+Diatreme's part is `deploy-paths`, the directories those pull requests write:
 
 ```yaml
-- uses: MagmaMoose/diatreme@v2
-  with:
-    mode: ${{ github.event_name == 'pull_request' && (github.event.action == 'closed' && 'deploy-promote' || 'ci') || 'release' }}
-    deploy-pr-targets: '{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'
+on:
+  push:
+    branches: [master]
+    # Merging a deploy PR is a deployment, not a release.
+    paths-ignore: ['k8s/overlays/acc/**', 'k8s/overlays/prd/**']
+  pull_request:
+    branches: [master]
+
+jobs:
+  diatreme:
+    steps:
+      - uses: MagmaMoose/diatreme@v2
+        with:
+          mode: ${{ github.event_name == 'pull_request' && 'ci' || 'release' }}
+          deploy-paths: '["k8s/overlays/acc", "k8s/overlays/prd"]'
 ```
 
-- **A release opens one PR, for the first overlay.** It moves `newTag` for every
-  image the release promoted, on a branch of its own
-  (`deploy/acc/v1.2.19`), and touches nothing else in the file: a trailing
-  comment such as a Flux `$imagepolicy` marker stays where it is.
-- **A merge opens the next.** `mode: deploy-promote`, on the `pull_request`
-  `closed` event, sees the merged `deploy/acc/...` PR and opens the same tags
-  for `prd`. What it carries is what the merge changed in `acc`, so `prd` only
-  ever gets a build `acc` has run.
-- **Merging is the deployment.** Nothing reaches an overlay without a merge, so
-  review, required checks and the branch's rules all apply to deploys.
-- **One open PR per overlay.** A newer tag supersedes the open PR, an overlay
-  that already runs the tag gets none, and an overlay is never moved backwards.
-
-Three things are required of the workflow, and the how-to explains each:
-authenticate with an App (`public-app` or `private-app`), because a PR opened
-with `GITHUB_TOKEN` starts no workflow and its required checks never report;
-add the overlays to the push trigger's `paths-ignore`, because merging a deploy
-PR must not cut a release (Diatreme refuses the run if it would); and include
-`closed` in the `pull_request` types, or nothing is promoted past the first
-overlay. On a pull request that only moves tags, `mode: ci` skips the image
-build.
-
-The complete workflow is in
-[Deploying through pull requests](how-to/deploy-through-pull-requests.md).
+- **A deploy PR builds no image.** In `mode: ci`, a pull request that changes nothing outside
+  `deploy-paths` skips the build and scan, and the `diatreme` check still reports, so a
+  required-status rule is satisfied in seconds.
+- **A deploy merge is never released.** In `mode: release`, a push that changes nothing
+  outside `deploy-paths` is refused before anything is tagged. Releasing it would publish a
+  release, which opens a deploy PR for the new version, whose merge would be released in turn.
+  The push trigger's `paths-ignore` is where that belongs; the refusal is for when it is
+  missing.
 
 ## Who may cut a release
 

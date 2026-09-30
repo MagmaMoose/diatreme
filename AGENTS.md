@@ -102,16 +102,10 @@ npm run check   # typecheck + tests + wrangler dry-run
   (`RESUME_AT_HEAD` and the `Promoted-From:` marker in
   `scripts/push-release-tag.sh`).
 - `mode: enable-auto-merge` enables native GitHub auto-merge for a specific PR.
-- Deploy PRs (`deploy-pr-targets`, opt-in): after a release, `mode: release`
-  opens a PR moving `newTag` for the promoted images (the `repositories`
-  output of `Promote images`, not a fresh bake derivation) in the first
-  kustomize overlay of that environment's list; `mode: deploy-promote`, on a
-  closed PR, opens the next overlay's PR with what the merged one moved.
-  `scripts/deploy-targets.sh` reads the input, `scripts/open-deploy-pr.sh`
-  owns one overlay's PR (a new branch per tag, never a reset of an open PR's
-  branch), `scripts/promote-deploy-pr.sh` is the merge side, and
-  `scripts/check-deploy-only-change.sh` both skips the `mode: ci` image build
-  for a tags-only PR and refuses a release of a deploy merge.
+- `deploy-paths` (opt-in) names the directories deploy PRs write (Tremvok's `gitops-pr`
+  opens those; Diatreme does not). `scripts/check-deploy-only-change.sh` is its one script:
+  it skips the `mode: ci` image build for a PR that changes nothing else, and refuses a
+  `mode: release` push that changes nothing else, before versioning.
 - Auth selection is centralized in `scripts/resolve-auth-token.sh`; public-App
   token exchange is requested by `scripts/request-public-app-token.sh`, which
   calls the broker's `/token` endpoint.
