@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-23T00:00:00Z",
+  "generated": "2026-09-30T00:00:00Z",
   "summary": "Diatreme is a release/deployment orchestrator published to the GitHub Marketplace as a composite action, plus a hosted GitHub-App backend that brokers OIDC tokens for it. The action runs on the runner (bash, bats-tested); the broker runs as a service and is called over HTTP. Neither imports the other. Consumers pin the action by SHA, so input names, defaults and broker wire responses are frozen API surface.",
   "entrypoints": [
     "action.yml:runs.steps",
@@ -9,7 +9,7 @@
   "modules": {
     "action": {
       "path": "action.yml",
-      "purpose": "Marketplace composite action: ~86 inputs, ~49 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
+      "purpose": "Marketplace composite action: ~101 inputs, ~58 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
       "exports": ["inputs", "outputs", "runs.steps"],
       "depends_on": ["auth", "versioning", "image", "sbom-sinks", "packaging", "pr-automation", "job-summary"]
     },
@@ -33,7 +33,7 @@
     },
     "image": {
       "path": "scripts/resolve-image-name.sh",
-      "purpose": "Image naming, build/push, and promotion. verify-promote-source.sh checks a pr-<N> image's provenance labels against the release commit's tree before promoting; stale images are rebuilt, not promoted. probe-image-tag.sh is the opt-in skip gate behind image-skip-existing: it reads the manifest of the release tag, and only a successful hit skips a promote - absence, an outage or an expired credential all mean do the work. Promote outcomes are tallied per image into the promoted/skipped/rebuilt outputs.",
+      "purpose": "Image naming, build/push, and promotion. verify-promote-source.sh checks a pr-<N> image's provenance labels against the release commit's tree before promoting; stale images are rebuilt, not promoted. probe-image-tag.sh is the opt-in skip gate behind image-skip-existing: it reads the manifest of the release tag, and only a successful hit skips a promote - absence, an outage or an expired credential all mean do the work. Promote outcomes are tallied per image into the promoted/skipped/rebuilt outputs. promote-from is the one retag with no rebuild fallback: verify-promote-from-images.sh refuses a promotion whose source image is definitely absent (probe-image-tag.sh's VERDICT_FILE tells absent from unknown, and an absent verdict is confirmed with docker manifest inspect), a failed retag is an error, and :latest moves only when the promoted version is the highest stable one.",
       "exports": ["image", "tags"],
       "depends_on": []
     },
@@ -129,6 +129,11 @@
       "caller": "action.yml (mode: release, promotion)",
       "calls": ["scripts/verify-promote-source.sh", "scripts/build-promotion-pr-body.sh"],
       "note": "Provenance is verified against the release commit's tree before an image is promoted rather than rebuilt."
+    },
+    {
+      "caller": "action.yml (mode: release, promote-from)",
+      "calls": ["scripts/resolve-promote-from.sh", "scripts/verify-promote-from-images.sh", "scripts/push-release-tag.sh"],
+      "note": "Promotes a named prerelease to stable. Every refusal (unknown tag, wrong channel, stable tag that is not this promotion's, a container package build, mismatched npm provenance, missing source image) happens before anything is written. The stable tag's message records its source (Promoted-From: <tag>); push-release-tag.sh runs with RESUME_AT_HEAD and that line as RESUME_MARKER, so the tag this promotion wrote resumes it and any other existing stable tag is refused."
     }
   ],
   "hotspots": [

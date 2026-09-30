@@ -48,6 +48,9 @@ in `scripts/*.sh`, which are `bats`-tested. Three modes:
   Before promoting a `pr-<N>` image it verifies the image's provenance labels
   (stamped by `mode: ci`) against the release commit's git tree; stale or
   unverifiable images are rebuilt from the release checkout instead of promoted.
+  With `promote-from` it releases a named prerelease as its stable version
+  instead: it checks out the prerelease's commit, confirms the source image
+  exists before tagging, retags it, and never rebuilds.
 - **`enable-auto-merge`**: enable native GitHub auto-merge for a specific PR.
 
 **Versioning backends** are selected by `versioning-tool` (default `auto`, which

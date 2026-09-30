@@ -39,10 +39,14 @@ signed it. `kid_not_found` means the broker's cached key set didn't contain it.
 carrying claims like `repository`, `ref` and `sha`. Requires `id-token: write`.
 Proof of which repository is asking, and the input to `/token`.
 
-**Promotion.** Retagging an already-built `pr-<N>` image as a release version
-instead of rebuilding it. Diatreme verifies the image's provenance labels
-against the release commit first, and rebuilds rather than promoting anything
-stale.
+**Promotion.** Retagging an already-built image as a release version instead of
+rebuilding it. Two kinds. On an ordinary release Diatreme promotes the `pr-<N>`
+image, verifies its provenance labels against the release commit first, and
+rebuilds rather than promoting anything stale. With `promote-from` you name a
+prerelease tag and that exact build becomes the stable version: the git tag
+lands on the prerelease's commit and records where it came from, and a retag
+that cannot be done fails the run instead of rebuilding. See
+[Promoting a release candidate to stable](how-to/promote-a-release-candidate.md).
 
 **Provenance labels.** Metadata stamped onto an image at CI build time recording
 which commit it came from. What makes promotion verifiable.

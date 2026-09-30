@@ -69,15 +69,24 @@ echo "Found ${COUNT} ClickUp ticket(s):"
 cat "${TICKETS_FILE}"
 
 # GitHub Release notes
+#
+# Skipped when the section is already there, as append-github-projects.sh does
+# for its own. A resumed `promote-from` run reaches this step a second time for
+# a release that already exists, and appending again would list every ticket
+# twice.
 CURRENT_BODY=$(gh release view "${TAG}" --json body --jq '.body' 2>/dev/null || true)
-{
-  printf '%s\n\n## ClickUp tickets\n\n' "${CURRENT_BODY}"
-  sed 's/^/- /' "${TICKETS_FILE}"
-} > /tmp/release-notes.md
-if gh release edit "${TAG}" --notes-file /tmp/release-notes.md; then
-  echo "Appended ClickUp section to release ${TAG}."
+if echo "${CURRENT_BODY}" | grep -q "^## ClickUp tickets"; then
+  echo "Release notes for ${TAG} already contain a ClickUp section; skipping."
 else
-  echo "::warning::Could not edit release notes for ${TAG} — continuing."
+  {
+    printf '%s\n\n## ClickUp tickets\n\n' "${CURRENT_BODY}"
+    sed 's/^/- /' "${TICKETS_FILE}"
+  } > /tmp/release-notes.md
+  if gh release edit "${TAG}" --notes-file /tmp/release-notes.md; then
+    echo "Appended ClickUp section to release ${TAG}."
+  else
+    echo "::warning::Could not edit release notes for ${TAG} — continuing."
+  fi
 fi
 
 # Promotion PR body, if one was just opened for this version
