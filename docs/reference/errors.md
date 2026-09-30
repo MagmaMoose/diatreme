@@ -1,7 +1,8 @@
 # Errors
 
 <!-- sources: broker/app, worker/src/index.ts, scripts/request-public-app-token.sh, scripts/detect-
-     versioning-tool.sh, scripts/build-image-dockerfile.sh
+     versioning-tool.sh, scripts/build-image-dockerfile.sh, scripts/resolve-promote-from.sh,
+     scripts/verify-promote-from-images.sh, action.yml
      -->
 
 Every failure a Diatreme run can surface, what causes it, and what to do. The
@@ -115,6 +116,38 @@ These come from the action's own scripts, before or instead of a broker call.
 | `OIDC request environment is unavailable. Grant 'id-token: write' to this job.` | The job has no OIDC permission, so no token can be minted at all. | Add `permissions: id-token: write` to the job. See [Setup](../setup.md#required-permissions). |
 | `GITHUB_REPOSITORY must be owner/repo.` | The environment variable is missing or malformed. | Only reachable outside a normal Actions run. |
 | `Token broker request failed with HTTP <status>: <error>` | The broker answered non-200. | Find the `error` and `reason` in the tables above. |
+
+### `promote-from` refusals
+
+Every message in this table starts with `promote-from:`. All but the last stop
+the run before a tag, an image or a GitHub Release is written.
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `tag '<tag>' does not exist in this repository` | The tag was mistyped, or never cut. The message lists the prereleases of that version that do exist. | Promote one of those. |
+| `'<tag>' is already a stable version` | A stable tag was passed. | Pass the prerelease, e.g. `v1.5.0-rc.3`. |
+| `'<tag>' is not a prerelease tag under tag-prefix '<prefix>'` | The value is not a SemVer prerelease in this package's tag series. | Check `tag-prefix` matches the one the prerelease was cut with. |
+| `is a '<id>' prerelease, but only '<id>' prereleases are promoted to stable` | The tag is from a channel other than the one that feeds production: the environment before the last in `environments`. | Promote that channel's build, or correct `environments` and `prerelease-identifiers`. |
+| `<tag> already exists on commit <sha>` | A different build was already released as that stable version. | Cut a new version. If the tag was a mistake, delete it and its GitHub Release first. |
+| `<tag> was already promoted from <other>` | Another prerelease on the same commit was already promoted to that version. It is a separate image, so promoting this one would repoint a published version. | Cut a new version. |
+| `was not cut by a promotion` | The stable version already exists on this commit and its tag has no `Promoted-From` line: an ordinary release cut it. | Nothing to promote; it is released. |
+| `cannot be combined with version-override` / `force-bump` | The version of a promotion is the source tag's own. | Remove the other input. |
+| `cannot be combined with publish-package and package-ecosystem: container` | That path runs `docker build` and would push a fresh image under the stable version. | Promote the image through a bake file or `Dockerfile`, or turn `publish-package` off for the run. |
+| `npm-provenance would attest the package to commit <sha>` | The workflow was started on a commit other than the prerelease's, and npm attests to the workflow's commit. | Start the workflow from the prerelease tag, or turn `npm-provenance` off for the run. |
+| `a promotion always releases the stable version, to '<env>'` | `environment` names something other than the last entry of `environments`. | Remove `environment`. |
+| `environments is not a JSON array` / `prerelease-identifiers is not a JSON object` | One of the two inputs does not parse. | Fix the JSON. |
+| `source image(s) are not in the registry` | The prerelease has a git tag but no image: its build failed, or a retention policy removed it. | Cut a new prerelease and promote that one. |
+| `could not retag <source> as <target>` | The registry refused the retag after the stable tag was pushed. The message carries the registry's error. | Fix the cause and re-run. The promotion resumes from the tag that is already there; it never falls back to a rebuild. |
+
+Two more come from the tag push itself, without the prefix, when the remote
+already holds the stable tag and it is not this promotion's:
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `Tag <tag> already exists on remote at <sha>, not at <sha>` | Another run released a different build as that version between this run's checks and its push. | Cut a new version. |
+| `Tag <tag> already exists on remote on the commit being released, but it is not this release` | The tag on the remote does not record this prerelease as its source. | Cut a new version. |
+
+See [Promoting a release candidate to stable](../how-to/promote-a-release-candidate.md).
 
 ## Getting more detail
 

@@ -93,6 +93,14 @@ npm run check   # typecheck + tests + wrangler dry-run
   (stamped by `mode: ci`) against the release commit's git tree via
   `scripts/verify-promote-source.sh`; stale or unverifiable images are rebuilt
   from the release checkout instead of promoted.
+- `mode: release` with `promote-from` releases a named prerelease tag as its
+  stable version. `scripts/resolve-promote-from.sh` settles everything before
+  anything is written, a second checkout moves the workspace to the
+  prerelease's commit, and `scripts/verify-promote-from-images.sh` confirms the
+  source images exist before the tag is cut. It retags and never rebuilds: a
+  failed retag is an error, and a re-run resumes on the stable tag it wrote
+  (`RESUME_AT_HEAD` and the `Promoted-From:` marker in
+  `scripts/push-release-tag.sh`).
 - `mode: enable-auto-merge` enables native GitHub auto-merge for a specific PR.
 - Auth selection is centralized in `scripts/resolve-auth-token.sh`; public-App
   token exchange is requested by `scripts/request-public-app-token.sh`, which

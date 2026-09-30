@@ -162,3 +162,237 @@ teardown() {
   leftover=$(find "${RUNNER_TEMP}" -name 'tag_push.err.*' 2>/dev/null | wc -l | tr -d ' ')
   [ "${leftover}" = "0" ]
 }
+
+# ── RESUME_AT_HEAD: a promotion finishing what it started ───────────────────
+# `promote-from` releases one named build. If that run dies after the stable
+# tag is pushed (a registry hiccup on the retag), running it again has to
+# finish the job, and "tag already exists, nothing to release" would leave the
+# tag with no image behind it for good. So an existing tag on HEAD's commit is
+# a resumed release. An existing tag anywhere else is a different build under
+# this version, and must never be taken for this one.
+
+# A bare `! cmd` only fails a bats test when it is the last line of it.
+refute() {
+  if "$@"; then
+    echo "expected to fail, but succeeded: $*"
+    return 1
+  fi
+}
+
+publish_tag_at() {
+  # $1 tag, $2 commit-ish, $3 "annotated" for an annotated tag
+  if [ "${3:-}" = "annotated" ]; then
+    git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+      tag -a "$1" -m "chore(release): $1" "$2"
+  else
+    git -C "${CLONE}" tag "$1" "$2"
+  fi
+  git -C "${CLONE}" push origin "$1" >/dev/null 2>&1
+  git -C "${CLONE}" tag -d "$1" >/dev/null
+}
+
+@test "RESUME_AT_HEAD: a lightweight tag already on HEAD resumes (released=true)" {
+  cd "${CLONE}"
+  publish_tag_at v8.0.0 HEAD
+  run env TAG=v8.0.0 RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Resuming that release"* ]]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+  refute grep -Fq "released=false" "${GITHUB_OUTPUT}"
+  grep -Fq "latest_tag=v8.0.0" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_AT_HEAD: an annotated tag is compared by the commit it peels to" {
+  # The tags Diatreme pushes are annotated, so the remote advertises the tag
+  # OBJECT's id under the tag name. Comparing that to HEAD would never match
+  # and every resume would be refused as "a different build".
+  cd "${CLONE}"
+  publish_tag_at v8.1.0 HEAD annotated
+  run env TAG=v8.1.0 MESSAGE="chore(release): v8.1.0" RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_AT_HEAD: a tag on a different commit is refused, not resumed" {
+  cd "${CLONE}"
+  publish_tag_at v8.2.0 HEAD annotated
+  git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+    commit --allow-empty -m "a later commit" >/dev/null
+
+  run env TAG=v8.2.0 RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::Tag v8.2.0 already exists on remote at"* ]]
+  [[ "$output" == *"Refusing to treat a different build as this release"* ]]
+  refute grep -Fq "released=" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_AT_HEAD: a tag that does not exist yet is pushed as usual" {
+  cd "${CLONE}"
+  run env TAG=v8.3.0 RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+  git -C "${BARE}" tag -l | grep -Fq "v8.3.0"
+}
+
+@test "without RESUME_AT_HEAD a tag already on HEAD stays a no-op" {
+  # The default must not move: for every other path an existing tag means a
+  # parallel run already cut this release, and resuming would release it twice.
+  cd "${CLONE}"
+  publish_tag_at v8.4.0 HEAD
+  run env TAG=v8.4.0 "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "released=false" "${GITHUB_OUTPUT}"
+  refute grep -Fq "released=true" "${GITHUB_OUTPUT}"
+
+  : > "${GITHUB_OUTPUT}"
+  run env TAG=v8.4.0 RESUME_AT_HEAD=false "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "released=false" "${GITHUB_OUTPUT}"
+}
+
+# ── RESUME_MARKER: the commit alone is not proof ────────────────────────────
+# Two prereleases can sit on one commit with different images behind them, and
+# an ordinary release may have cut the same version there. The marker line in
+# the tag's message is what says "this tag is this promotion's".
+
+MARKER="Promoted-From: v9.0.0-rc.3"
+
+publish_marked_tag() {
+  # $1 tag, $2 commit-ish, $3 marker line
+  git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+    tag -a "$1" -m "chore(release): $1" -m "$3" "$2"
+  git -C "${CLONE}" push origin "$1" >/dev/null 2>&1
+  git -C "${CLONE}" tag -d "$1" >/dev/null
+}
+
+@test "RESUME_MARKER: a tag on HEAD carrying the marker resumes" {
+  cd "${CLONE}"
+  publish_marked_tag v9.0.0 HEAD "${MARKER}"
+  run env TAG=v9.0.0 RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Resuming that release"* ]]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_MARKER: a tag on HEAD promoted from another prerelease is refused" {
+  cd "${CLONE}"
+  publish_marked_tag v9.1.0 HEAD "Promoted-From: v9.1.0-rc.3"
+  run env TAG=v9.1.0 RESUME_AT_HEAD=true RESUME_MARKER="Promoted-From: v9.1.0-rc.4" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"it is not this release"* ]]
+  [[ "$output" == *"no 'Promoted-From: v9.1.0-rc.4' line"* ]]
+  refute grep -Fq "released=" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_MARKER: a tag on HEAD with no marker at all is refused" {
+  cd "${CLONE}"
+  publish_tag_at v9.2.0 HEAD annotated
+  run env TAG=v9.2.0 RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"it is not this release"* ]]
+}
+
+@test "RESUME_MARKER: a lightweight tag cannot borrow the marker from its commit message" {
+  cd "${CLONE}"
+  git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+    commit --allow-empty -m "feat: thing" -m "${MARKER}" >/dev/null
+  publish_tag_at v9.3.0 HEAD
+  run env TAG=v9.3.0 RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"it is not this release"* ]]
+}
+
+@test "RESUME_MARKER: the tag this script pushes is one a later run resumes on" {
+  # The round trip a promotion relies on: MESSAGE carries the marker, the tag
+  # goes out, and the same call again finds its own tag.
+  cd "${CLONE}"
+  message="chore(release): v9.4.0"$'\n\n'"${MARKER}"
+  run env TAG=v9.4.0 MESSAGE="${message}" RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+  refute grep -q "Resuming" <<< "$output"
+
+  : > "${GITHUB_OUTPUT}"
+  run env TAG=v9.4.0 MESSAGE="${message}" RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Resuming that release"* ]]
+  grep -Fq "released=true" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_AT_HEAD: a remote that cannot be asked is an error, not 'absent'" {
+  # Reading a failed query as "absent" would walk a resumed run into `git tag`
+  # with the tag already in the clone, and hide the real cause behind
+  # "tag already exists".
+  cd "${CLONE}"
+  git -C "${CLONE}" config --unset-all "url.${BARE}.insteadOf"
+  run env TAG=v9.5.0 RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::Could not ask the remote whether tag v9.5.0 exists"* ]]
+  refute grep -Fq "released=" "${GITHUB_OUTPUT}"
+}
+
+# ── losing the race between check and push ──────────────────────────────────
+# `git` is wrapped so the first two `ls-remote` calls (the resume check and
+# the pre-check) see nothing, as they would a moment before a rival run's push
+# lands. The push then fails against the tag that is really there.
+
+blind_git() {
+  REAL_GIT=$(command -v git)
+  export REAL_GIT
+  export LSREMOTE_CALLS="${WORK}/ls-remote.calls"
+  echo 0 > "${LSREMOTE_CALLS}"
+  mkdir -p "${WORK}/bin"
+  cat > "${WORK}/bin/git" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = "ls-remote" ]; then
+  n=$(($(cat "${LSREMOTE_CALLS}") + 1))
+  echo "${n}" > "${LSREMOTE_CALLS}"
+  if [ "${n}" -le "${LSREMOTE_BLIND:-2}" ]; then exit 0; fi
+fi
+exec "${REAL_GIT}" "$@"
+STUB
+  chmod +x "${WORK}/bin/git"
+}
+
+@test "RESUME_AT_HEAD: losing the race to a tag on another commit is an error, not a green no-op" {
+  cd "${CLONE}"
+  publish_marked_tag v9.6.0 HEAD "Promoted-From: v9.6.0-rc.1"
+  git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+    commit --allow-empty -m "the build this run was asked to release" >/dev/null
+  blind_git
+
+  run env PATH="${WORK}/bin:${PATH}" TAG=v9.6.0 MESSAGE="chore(release): v9.6.0" \
+    RESUME_AT_HEAD=true "${SCRIPT}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Refusing to treat a different build as this release"* ]]
+  refute grep -Fq "released=" "${GITHUB_OUTPUT}"
+}
+
+@test "RESUME_AT_HEAD: losing the race to the same release stays a no-op" {
+  # The run that won is carrying the release through; doing it twice helps
+  # nobody.
+  cd "${CLONE}"
+  publish_marked_tag v9.7.0 HEAD "${MARKER}"
+  blind_git
+
+  run env PATH="${WORK}/bin:${PATH}" TAG=v9.7.0 \
+    MESSAGE="chore(release): v9.7.0"$'\n\n'"${MARKER}" \
+    RESUME_AT_HEAD=true RESUME_MARKER="${MARKER}" "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"parallel run won the race"* ]]
+  grep -Fq "released=false" "${GITHUB_OUTPUT}"
+  refute grep -Fq "released=true" "${GITHUB_OUTPUT}"
+}
+
+@test "without RESUME_AT_HEAD losing the race is the no-op it always was" {
+  cd "${CLONE}"
+  publish_tag_at v9.8.0 HEAD annotated
+  git -C "${CLONE}" -c user.name=tester -c user.email=t@example.com \
+    commit --allow-empty -m "a later commit" >/dev/null
+  blind_git
+
+  run env PATH="${WORK}/bin:${PATH}" LSREMOTE_BLIND=1 TAG=v9.8.0 "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"parallel run won the race"* ]]
+  grep -Fq "released=false" "${GITHUB_OUTPUT}"
+}

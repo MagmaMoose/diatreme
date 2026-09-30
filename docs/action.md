@@ -157,6 +157,53 @@ exactly what you meant to replace.
 `images-promoted`, `images-skipped` and `images-rebuilt` report what each run
 actually did.
 
+## Promoting a prerelease to stable
+
+`promote-from` releases an existing prerelease as its stable version instead of
+cutting a new one. Give it the tag that was tested:
+
+```yaml
+- uses: MagmaMoose/diatreme@v2
+  with:
+    mode: release
+    promote-from: v1.5.0-rc.3   # released as v1.5.0
+```
+
+It is for flows where no branch builds a stable version: a release branch cuts
+`-rc.N` prereleases, one is signed off, and that build ships. Four things
+separate it from every other release path:
+
+- **You name the source.** No versioning tool runs and nothing is searched for.
+  The version is the tag's own, minus its prerelease part.
+- **The stable tag lands on the prerelease's commit.** The run checks that
+  commit out first, so it does not matter which branch the workflow was started
+  on or how far it has moved since.
+- **It never rebuilds.** Each image is retagged from `<image>:<source tag>`. A
+  source image the registry reports missing stops the run before the tag is
+  pushed, and a retag that fails stops it too. A rebuild is not the build that
+  was tested. For the same reason `publish-package` with
+  `package-ecosystem: container`, which builds an image, is refused.
+- **`:latest` only moves forward.** It follows the promotion when the version is
+  the highest stable one, and stays put when you promote a fix on an older
+  release line.
+
+The target is always the last entry of `environments`, whatever
+`deployment-model` and `branch-map` say, so the production guardrails below
+apply. `version-override` and `force-bump` are rejected alongside it, and
+`version-file` is not written.
+
+The stable tag records the prerelease it came from, so re-running a promotion
+that died half way finishes it, and promoting anything else under a version that
+already exists is refused.
+
+Provenance is attested only when it would be true. `npm-provenance` and the SLSA
+attestation behind `image-sign` both name the commit the workflow was started on,
+so start the workflow from the prerelease tag if you use either.
+
+The full walkthrough, including a complete workflow and what each refusal means,
+is in
+[Promoting a release candidate to stable](how-to/promote-a-release-candidate.md).
+
 ## Who may cut a release
 
 By default, whoever can push to or merge into the release branch can cut a
@@ -281,10 +328,12 @@ A public Helm chart has its own page:
 The action exposes: `version`, `tag`, `is-prerelease`, `released`,
 `prerelease-identifier`, `resolved-environment`, `package-published`,
 `image-scanned`, `image-findings`, `image-signed`, `resolved-image-name`,
-`images-promoted`, `images-skipped`, `images-rebuilt`, `version-files-updated`.
+`images-promoted`, `images-skipped`, `images-rebuilt`, `version-files-updated`,
+`promoted-from`.
 
 The three `images-*` counters partition a `mode: release` promote: every image is
 either retagged from a verified source, skipped as already present, or rebuilt.
+On a `promote-from` run `images-rebuilt` is always 0.
 
 Each one's exact meaning is in the
 [README's output table](https://github.com/MagmaMoose/diatreme#outputs).

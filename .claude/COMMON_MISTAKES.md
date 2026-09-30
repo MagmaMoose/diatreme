@@ -46,7 +46,23 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   release scan), each re-running `bake --print` and appending `:${NORMALIZE_TAG}`. They must
   stay identical or the org signs one set of images and inventories another. There is a bats
   guard counting the two derivation literals; if you add a fourth consumer, update it rather
-  than deleting it.
+  than deleting it. The `promote-from` preflight is that fourth consumer: it derives the same
+  repositories at the SOURCE tag, and `tests/bats/promote-from.bats` counts the shared jq
+  literal at three (scan, sign, preflight).
+- **`promote-from` must never grow a rebuild fallback.** Every other retag in `Promote images`
+  drops to a fresh build when it fails, and that is the right call there. A promotion exists
+  to ship the build that was tested, so a fresh build under the stable tag is the failure it
+  rules out: it errors instead, and a re-run resumes (`RESUME_AT_HEAD` in
+  `push-release-tag.sh`, because the stable git tag is already pushed when the retag runs).
+  Resume keys on the `Promoted-From: <tag>` line in the stable tag's message, NOT on the
+  commit: rc.3 and rc.4 can share a commit and be different images, so "same commit" alone
+  repoints a published version. Do not swap that for a registry digest check either; the GHE
+  pull/tag/push fallback changes the digest, so every resume there would read as a conflict.
+  The same goes for its three other differences from `tbd`'s later-environment retag: the
+  source is named, never "newest prerelease"; the tag lands on the prerelease's commit via a
+  second checkout, never on the branch tip; and `:latest` moves only for the highest stable
+  version. `tests/bats/promote-from.bats` runs the real `run:` blocks against stubs to hold
+  all four, so change the behaviour there first.
 
 - **Trivy emits the newest CycloneDX spec it knows, and Dependency-Track rejects any spec it
   does not.** `HTTP 400 {"detail":"Unrecognized specVersion 1.7"}` — Trivy 0.71 writes 1.7,

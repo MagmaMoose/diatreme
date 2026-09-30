@@ -37,6 +37,9 @@
 #                           run never reached normalisation, and is reported as
 #                           an incomplete run rather than as "nothing to do".
 #   VERSIONING_TOOL         backend that produced the version.
+#   PROMOTED_FROM           prerelease tag a `promote-from` run released as
+#                           stable. No backend produced that version, so this
+#                           row stands where "Versioning tool" otherwise would.
 #   REGISTRY, OWNER,        parts of the image reference; whichever are
 #   IMAGE_NAME              supplied are joined into one pullable ref.
 #   PR_NUMBER               PR the run is about (ci, enable-auto-merge).
@@ -50,6 +53,12 @@
 #   IMAGE_SCAN_SEVERITY     the band it was counted at.
 #   IMAGES_SIGNED           number of released images cosign-signed.
 #   AUTO_MERGE_METHOD       merge method enabled (enable-auto-merge).
+#   PROMOTE_OUTCOME         the `steps.<id>.outcome` of the image promote.
+#                           RELEASED is settled when the tag is cut, which is
+#                           BEFORE the image is promoted, so on its own it
+#                           reports a release whose image never landed as
+#                           released. A `promote-from` run can fail exactly
+#                           there by design: it has no rebuild to fall back on.
 #   BUILD_OUTCOME,          the `steps.<id>.outcome` of the ci image build and
 #   AUTO_MERGE_OUTCOME      of the auto-merge step. Those two modes have no
 #                           equivalent of RELEASED to key off, and every other
@@ -77,6 +86,7 @@ ENVIRONMENT="${ENVIRONMENT:-}"
 IS_PRERELEASE="${IS_PRERELEASE:-}"
 RELEASED="${RELEASED:-}"
 VERSIONING_TOOL="${VERSIONING_TOOL:-}"
+PROMOTED_FROM="${PROMOTED_FROM:-}"
 REGISTRY="${REGISTRY:-}"
 OWNER="${OWNER:-}"
 IMAGE_NAME="${IMAGE_NAME:-}"
@@ -93,6 +103,7 @@ IMAGES_SIGNED="${IMAGES_SIGNED:-}"
 AUTO_MERGE_METHOD="${AUTO_MERGE_METHOD:-}"
 BUILD_OUTCOME="${BUILD_OUTCOME:-}"
 AUTO_MERGE_OUTCOME="${AUTO_MERGE_OUTCOME:-}"
+PROMOTE_OUTCOME="${PROMOTE_OUTCOME:-}"
 
 LINES=()      # the rendered document, one Markdown line per entry
 ROWS=()       # metric table rows that had a value
@@ -181,7 +192,11 @@ status_line() {
       # A released run without a tag is not a state normalisation can produce,
       # but the dash keeps the sentence honest if one ever reaches us.
       ref="${TAG:-${VERSION:-—}}"
-      if [ "${RELEASED}" = "true" ]; then
+      if [ "${RELEASED}" = "true" ] && [ "${PROMOTE_OUTCOME}" = "failure" ]; then
+        # The tag is out, the image is not. Saying "Released" here would be
+        # the summary asserting the one thing the run failed to do.
+        printf '> ❌ **Run did not complete** — %s was tagged, but promoting its image failed. See the failing step above.' "$(tick "${ref}")"
+      elif [ "${RELEASED}" = "true" ]; then
         if [ -n "${ENVIRONMENT}" ]; then
           printf "✅ Released %s to \`%s\`." "$(tick "${ref}")" "${ENVIRONMENT}"
         else
@@ -268,6 +283,7 @@ row "Tag" "$(tick "${TAG}")"
 row "Environment" "$(tick "${ENVIRONMENT}")"
 row "Prerelease" "$(yesno "${IS_PRERELEASE}")"
 row "Versioning tool" "$(tick "${VERSIONING_TOOL}")"
+row "Promoted from" "$(tick "${PROMOTED_FROM}")"
 row "Image" "$(tick "${IMAGE_REF}")"
 # Any one of the three present means the promote step ran and tallied; report
 # all three then, so "0 skipped" and "0 rebuilt" are visible facts.
