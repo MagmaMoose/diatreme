@@ -62,12 +62,8 @@ no token to rotate.
   DefectDojo. One project version per release, not one per pull request.
 - **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
   Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
-- **Multi-environment promotion** — dev → staging → prod with promotion PRs and native
-  auto-merge, or promote the release candidate QA signed off to stable by tag: same
-  commit, same image, never a rebuild.
-- **GitOps deploys by pull request** — after a release, a PR moves the image tag in your
-  first kustomize overlay; merging it deploys and opens the same PR for the next one
-  (acc → prd). No image automation committing straight to the branch the cluster reads.
+- **Multi-environment promotion** — dev → staging → prod with promotion PRs, a signed-off
+  RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs, acc → prd.
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
@@ -82,7 +78,6 @@ flowchart LR
   D -->|packages| P[npm · NuGet · Maven · Gradle · pip · gem]
   I --> DT[(Dependency-Track)]
   I --> DD[(DefectDojo)]
-  I --> G[Deploy PR: acc → merge → prd]
 ```
 
 ## Most-used inputs
@@ -95,7 +90,6 @@ flowchart LR
 | `environment` | — | The environment this run releases to. |
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
-| `deploy-pr-targets` | — | Kustomize overlays a release is deployed to, in order: a PR for the first, the next on each merge. |
 
 All 104 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
