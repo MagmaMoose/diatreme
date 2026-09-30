@@ -14,8 +14,9 @@ This repository has two surfaces: the **composite action** (`action.yml` + `scri
 ## Action
 
 - Install: `uses: MagmaMoose/diatreme@v2` (floating major tag). The default `auth-mode: public-app` needs `id-token: write` and the hosted [Diatreme GitHub App](https://github.com/apps/diatreme).
-- Modes: `ci` (PR image build, branch-naming gate, optional image scan → CycloneDX SBOM to Dependency-Track + optional findings to DefectDojo), `release` (versioning, GitHub Release, image promotion, promotion PRs), `enable-auto-merge`.
+- Modes: `ci` (PR image build, branch-naming gate, optional image scan → CycloneDX SBOM to Dependency-Track + optional findings to DefectDojo), `release` (versioning, GitHub Release, image promotion, promotion PRs, deploy PRs), `enable-auto-merge`, `deploy-promote`.
 - Promotion by tag: `promote-from: v1.5.0-rc.3` (mode `release`) releases that existing prerelease as `v1.5.0`, on the prerelease's commit, by retagging its image. It never rebuilds, and re-running resumes.
+- Deploy PRs: `deploy-pr-targets: '{"prod": ["k8s/overlays/acc", "k8s/overlays/prd"]}'` opens a pull request moving the released images' `newTag` in the first kustomize overlay after each release; `mode: deploy-promote` (on `pull_request` `closed`) opens the next overlay's PR when one merges. Merging is the deployment; it replaces image automation for those overlays. How-to: docs/how-to/deploy-through-pull-requests.md.
 - Versioning tools: `auto` (default; detect from repo markers under `working-directory`), `semantic-release-python`, `semantic-release-npm`, `gitversion`, `release-please`.
 - Package publishing: `nuget`, `npm`, `maven`, `gradle`, `rubygems`, `container`, `pip`, `s3` — to GitHub Packages, public registries, or an S3 object store (OIDC-only, version-scoped immutable keys), on github.com and GitHub Enterprise.
 

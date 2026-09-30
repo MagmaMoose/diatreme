@@ -9,9 +9,9 @@
   "modules": {
     "action": {
       "path": "action.yml",
-      "purpose": "Marketplace composite action: ~101 inputs, ~58 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
+      "purpose": "Marketplace composite action: ~104 inputs, ~63 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs -> deploy PRs), enable-auto-merge, deploy-promote. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too. With deploy-pr-targets, release opens a PR moving the promoted images' newTag in the first kustomize overlay of the environment's list, and deploy-promote opens the next overlay's PR when one merges; a push that only changes the overlays is refused before versioning, and a ci run on a tags-only PR skips the image build.",
       "exports": ["inputs", "outputs", "runs.steps"],
-      "depends_on": ["auth", "versioning", "image", "sbom-sinks", "packaging", "pr-automation", "job-summary"]
+      "depends_on": ["auth", "versioning", "image", "sbom-sinks", "packaging", "pr-automation", "deploy-prs", "job-summary"]
     },
     "auth": {
       "path": "scripts/resolve-auth-token.sh",
@@ -53,6 +53,12 @@
       "path": "scripts/build-promotion-pr-body.sh",
       "purpose": "Promotion PR bodies, auto-merge enablement, branch-naming gate, and GitHub Projects/ClickUp linkage.",
       "exports": [],
+      "depends_on": []
+    },
+    "deploy-prs": {
+      "path": "scripts/open-deploy-pr.sh",
+      "purpose": "GitOps deploy PRs (deploy-pr-targets). deploy-targets.sh validates the input and looks overlays up by name (first, next, path, paths). open-deploy-pr.sh owns one overlay's PR: it rewrites only the value on each images[] entry's newTag line, commits through the contents API on a new branch <prefix>/<overlay>/<tag> (never resetting an open PR's branch, which GitHub would mark merged), supersedes older open PRs, and declines to move an overlay backwards or past a newer open PR. promote-deploy-pr.sh is mode deploy-promote: it diffs the merged overlay at the merge commit against its first parent and proposes exactly that for the next overlay. check-deploy-only-change.sh is the ci build skip and the release guard.",
+      "exports": ["deploy PR", "deploy_only"],
       "depends_on": []
     },
     "job-summary": {
@@ -134,6 +140,11 @@
       "caller": "action.yml (mode: release, promote-from)",
       "calls": ["scripts/resolve-promote-from.sh", "scripts/verify-promote-from-images.sh", "scripts/push-release-tag.sh"],
       "note": "Promotes a named prerelease to stable. Every refusal (unknown tag, wrong channel, stable tag that is not this promotion's, a container package build, mismatched npm provenance, missing source image) happens before anything is written. The stable tag's message records its source (Promoted-From: <tag>); push-release-tag.sh runs with RESUME_AT_HEAD and that line as RESUME_MARKER, so the tag this promotion wrote resumes it and any other existing stable tag is refused."
+    },
+    {
+      "caller": "action.yml (mode: release / deploy-promote, deploy-pr-targets)",
+      "calls": ["scripts/deploy-targets.sh", "scripts/open-deploy-pr.sh", "scripts/promote-deploy-pr.sh", "scripts/check-deploy-only-change.sh"],
+      "note": "Validate deploy PR targets runs right after checkout and Deploy overlay guard before versioning, so neither a bad value nor a deploy merge costs a tag. Open deploy PR takes the images from Promote images' repositories output rather than re-deriving them from the bake file."
     }
   ],
   "hotspots": [

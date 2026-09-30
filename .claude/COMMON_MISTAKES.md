@@ -96,3 +96,23 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   `1.14.6`. force-bump now bypasses GitVersion and bumps the latest stable tag, like the
   semantic-release paths. `tests/bats/action-input-defaults.bats` pins that the override is
   gone.
+
+- **Never reset an open deploy PR's branch to the base, even to recommit on top.** GitHub
+  marks a pull request as MERGED the moment its head points at a commit the base already
+  contains, so "reset `deploy/acc` to master, commit the new tag" closes the open PR as
+  merged with nothing in it, and the reviewer sees a merged PR that deployed nothing.
+  `open-deploy-pr.sh` therefore makes a new branch per tag (`deploy/acc/v1.2.20`) and closes
+  the old PR as superseded. A leftover branch is only deleted when no open PR sits on it.
+- **A deploy merge must never be released.** Merging `deploy/acc/...` is a push to the
+  release branch; released, it cuts a version, whose deploy PR merges, which cuts a
+  version... Consumers paths-ignore the overlays on push, and `Deploy overlay guard`
+  refuses the run before versioning when they forget. Do not make the guard a warning:
+  by the time the release tail runs, the tag is out.
+- **Deploy PRs move one line per image, never a re-serialised file.** `yq -i` rewrites the
+  whole document (indentation of sequences, blank lines), so every deploy PR would carry
+  unrelated diff noise. The value on the `newTag:` line is replaced with sed, located by
+  yq's `line`, and verified by reading it back; a flow-style entry is refused rather than
+  half-edited. That is also what keeps a Flux `$imagepolicy` marker on the line.
+- **Deploy PRs need an App token.** A PR opened with `GITHUB_TOKEN` starts no workflow, so
+  its required checks never report and it cannot merge. That is fine for a release
+  workflow's own PRs elsewhere and fatal here.
