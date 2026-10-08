@@ -34,7 +34,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write     # create tags and GitHub Releases
       id-token: write     # exchanges GitHub OIDC for a short-lived installation token
     steps:
       - uses: MagmaMoose/diatreme@v2
@@ -91,7 +91,7 @@ flowchart LR
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 101 inputs and every output →
+All 102 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation
