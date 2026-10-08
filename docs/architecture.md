@@ -3,7 +3,7 @@
 <!-- sources: action.yml, scripts, broker/app, worker/src/index.ts, .github/workflows -->
 
 Diatreme is two independent surfaces in one repo. They talk over HTTP and share no
-code. The action calls the worker's broker endpoints; the worker never calls the
+code. The action calls the broker's token endpoint; the broker never calls the
 action.
 
 ```mermaid
@@ -13,19 +13,12 @@ flowchart LR
         S["scripts/*.sh"]
         A --> S
     end
-    subgraph broker["Hosted broker"]
+    subgraph broker["Hosted broker (Python/Lambda)"]
         T["POST /token<br/>OIDC to App token"]
-        G["POST /sign<br/>App-attributed commit"]
-        R["GET /releases<br/>aggregate"]
-        W["POST /webhook<br/>push auto-update"]
     end
     S -->|"HTTPS, sync"| T
-    S -->|"HTTPS, sync"| G
     GH["GitHub REST + GraphQL"]
     T -->|"HTTPS, sync"| GH
-    G -->|"HTTPS, sync"| GH
-    R -->|"HTTPS, sync"| GH
-    GH -.->|"webhook delivery, async"| W
 ```
 
 The action calls the broker. The broker never calls the action. Every call is
@@ -34,7 +27,7 @@ X on the release rather than a silent skip.
 
 ## The composite action
 
-`action.yml` is deliberately thin glue (83 inputs, 44 steps); the real logic lives
+`action.yml` is deliberately thin glue (~101 inputs, ~58 steps); the real logic lives
 in `scripts/*.sh`, which are `bats`-tested. Three modes:
 
 - **`ci`**: build and push the `pr-<N>` Docker image, optionally enforce branch
@@ -73,12 +66,13 @@ serve any hostname.
     both broker hostnames. The TypeScript Cloudflare Worker (`worker/`) remains
     the code-of-record reference and rollback target. See [Deployment](operations/deployment.md).
 
+The production Python/Lambda broker serves one action-facing route:
+
 | Endpoint | Purpose | Auth |
 | --- | --- | --- |
 | `POST /token` | Exchange a GitHub Actions OIDC token for a short-lived App installation token. | OIDC (`id-token: write`) |
-| `POST /sign` | Create a GitHub-signed, App/bot-attributed commit via `createCommitOnBranch`. | `Bearer PROCESS_TRIGGER_SECRET` |
-| `GET /releases` | Aggregated latest-release history across installations, cached. Caps are reported via `truncated`, never applied silently. | `Bearer PROCESS_TRIGGER_SECRET` |
-| Webhook `push` | Fast-forward open PRs targeting the pushed branch (opt-in). | HMAC (`GITHUB_WEBHOOK_SECRET`) |
+
+The retired Cloudflare Worker (`worker/`) also implemented `POST /sign`, `GET /releases`, and `POST /webhook`; those routes are documented in [Broker API](reference/broker-api.md) but are not served by the production broker.
 
 OIDC verification pins the issuer before selecting its JWKS, so a forged `iss` can't
 select a foreign key. **GitHub Enterprise** (ghe.com / GHES) is opt-in via the
