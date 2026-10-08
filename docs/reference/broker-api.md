@@ -4,8 +4,10 @@
      -->
 
 The broker is the GitHub App backend the action calls when `auth-mode` is
-`public-app`. Four routes, all on the same origin. Anything else returns
-`404 not_found`.
+`public-app`. The production Python/Lambda broker serves `POST /token` (the
+route the action uses). The retired Cloudflare Worker also served `POST /sign`,
+`GET /releases`, and `POST /webhook`; those are documented below for reference.
+Anything else returns `404 not_found`.
 
 Base URL for the hosted broker:
 

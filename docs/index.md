@@ -7,10 +7,11 @@ in one repository that communicate over HTTP, neither imports the other:
   Marketplace. Runs semantic versioning, GitHub Releases, Docker image build and
   promotion, image scanning with SBOM/finding routing, and promotion-PR automation.
 - **Hosted broker**, the GitHub App backend at `api.diatreme.magmamoose.com`.
-  An OIDC to installation-token broker and an App-attributed commit and tag
-  signer. Most users never touch it directly. `worker/` in this repository is
-  its TypeScript implementation; see [Deployment](operations/deployment.md) for
-  what actually serves that hostname.
+  An OIDC to installation-token minter: the action exchanges a GitHub Actions
+  OIDC token here for a short-lived installation token. Most users never touch
+  it directly. `broker/` is the Python/Lambda production implementation;
+  `worker/` is the retired Cloudflare Worker kept as code-of-record. See
+  [Deployment](operations/deployment.md) for what serves each hostname.
 
 Install the action:
 
