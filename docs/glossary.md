@@ -48,12 +48,23 @@ lands on the prerelease's commit and records where it came from, and a retag
 that cannot be done fails the run instead of rebuilding. See
 [Promoting a release candidate to stable](how-to/promote-a-release-candidate.md).
 
+**Merge-back.** The pull request that merges a release branch into the main
+line after a stable release from it, so its hotfixes reach every later
+release. Diatreme opens it from a `merge-back/release-X.Y.Z` branch rather than
+from the release branch, which therefore never receives commits from the main
+line. See [Releasing from release branches](how-to/release-from-release-branches.md).
+
 **Provenance labels.** Metadata stamped onto an image at CI build time recording
 which commit it came from. What makes promotion verifiable.
 
 **Reason.** The coarse, non-sensitive string the broker returns alongside
 `error` on a verification failure, naming which check failed. See
 [Errors](reference/errors.md).
+
+**Release line.** A release branch named after a version (`release/1.4.0`)
+and every version cut from it: candidates of 1.4.0 until it ships, then 1.4.1,
+1.4.2 for its hotfixes. With `release-branch-versioning: branch` the line's
+name is the version source, not a versioning backend.
 
 **SBOM.** Software Bill of Materials. Diatreme produces one in CycloneDX format
 during image scanning and routes it to Dependency-Track.

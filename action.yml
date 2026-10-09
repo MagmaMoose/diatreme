@@ -17,6 +17,7 @@ inputs:
       Pipeline mode. One of:
         ci                 Build Docker image and push pr-<N> to GHCR (run on pull_request events).
         release            (default) Run versioning, promote Docker image, and optionally create a promotion PR (when deployment-model is tbd-pr and create-promotion-pr is true).
+        cut-release-branch Create `release/X.Y.Z` from the commit the workflow runs on, for the version in `version-override` (run it from workflow_dispatch on the default branch). Refuses a version already released or not above the newest release, unless the workflow runs on a stable tag of that line, which reopens it for a patch. Created with an App token, the new branch starts the release workflow, which cuts its first candidate (see `release-branch-versioning: branch`).
         enable-auto-merge  Enable native GitHub auto-merge on the PR referenced by `pr-number`. Intended for non-promotion (feature) PRs invoked from a separate `pull_request` workflow. The repository must have "Allow auto-merge" enabled and branch protection with at least one required status check on the target branch — both are GitHub prerequisites for auto-merge, not Diatreme ones.
     required: false
     default: 'release'
@@ -867,7 +868,8 @@ inputs:
       Enforce TBD branch naming convention on PRs (mode: ci).
       Allowed prefixes: feat, fix, chore, hotfix, docs, refactor, perf, test,
       ci, style, build, revert, deploy, release, claude, codex (plus the
-      promote prefix). Add more via extra-branch-prefixes.
+      promote prefix and merge-back). Add more via extra-branch-prefixes, or
+      replace them with your own convention via branch-name-patterns.
       Set to false for BBD (branches are named after environments).
     required: false
     default: 'true'
@@ -882,6 +884,32 @@ inputs:
       allowed and ignored). Anything else is rejected: the prefixes are
       matched as a regex, where a metacharacter would silently widen or
       break the check rather than add a prefix.
+    required: false
+    default: ''
+
+  branch-name-patterns:
+    description: |
+      Whole branch names a pull request may come from, replacing the built-in
+      types and `extra-branch-prefixes` (mode: ci, enforce_branch_naming:
+      true). One pattern per line, or comma-separated. Empty (the default)
+      keeps the built-in types.
+
+        feature/{issue}-{name}
+        hotfix/{issue}-{name}
+        release/{version}
+
+      Placeholders:
+        {issue}    an issue number (digits)
+        {version}  major.minor.patch, no leading zeros
+        {name}     lowercase words joined by single hyphens, e.g. search-filter
+        *          anything within one path segment
+        **         anything, across segments (e.g. deploy/** for deploy PRs)
+
+      Everything else is literal and the whole name must match, so
+      `release/{version}` refuses `release/1.4` and `release/1.4.0-rc1`. An
+      unknown placeholder is an error. Bot branches (dependabot/, renovate/)
+      and Diatreme's own (the promote prefix and merge-back/) are always
+      accepted.
     required: false
     default: ''
 
@@ -1098,6 +1126,9 @@ inputs:
       stripped only for `${VERSION}` substitution in bake/build args.
 
       Mutually exclusive with `force-bump`.
+
+      In `mode: cut-release-branch` it is the version the branch is cut for,
+      and must be a plain `X.Y.Z`: the branch is named `release/X.Y.Z`.
     required: false
     default: ''
 
@@ -1117,16 +1148,64 @@ inputs:
       what the cluster pulls.
 
       Allowed values:
-        auto  (default) Derive the version when HEAD's subject names a
-              release/hotfix branch, the target environment is the stable one,
-              and the derived version is ahead of the latest released tag.
-              Otherwise the configured versioning tool decides, unchanged.
-        off   Never derive; the versioning tool always decides.
+        auto    (default) Derive the version when HEAD's subject names a
+                release/hotfix branch, the target environment is the stable
+                one, and the derived version is ahead of the latest released
+                tag. Otherwise the configured versioning tool decides,
+                unchanged.
+        branch  Everything `auto` does, and version a run ON a release branch
+                from that branch's own name, in any environment and with no
+                versioning tool, so commit messages need not be conventional.
+                `release/1.4.0` cuts 1.4.0 (`1.4.0-rc.N` in a prerelease
+                environment) until 1.4.0 is released, then the next free patch:
+                a hotfix merged into `release/1.4.0` once v1.4.0 shipped cuts
+                `1.4.1-rc.1`. A re-run on a commit that already holds its
+                candidate resumes that release, and a commit already released
+                as a stable version of the line releases nothing. A branch
+                whose name holds no X.Y.Z is left to the versioning tool.
+        off     Never derive; the versioning tool always decides.
 
       Skipped when `version-override` or `force-bump` is set — an explicit
       instruction from the caller always outranks the branch name.
     required: false
     default: 'auto'
+
+  release-branch-merge-back:
+    description: |
+      Branch to merge a release branch back into after a stable release from
+      it, e.g. `master`, or `@default` for the repository's default branch.
+      Empty (the default) turns this off.
+
+      After a stable release whose commit sits on a `release/X.Y.Z` branch (a
+      `promote-from` of one of its candidates, or a run on the branch itself),
+      Diatreme opens a pull request merging that branch into this one, so the
+      hotfixes released from it reach every later release. Nothing is opened
+      when this branch already contains the release branch's head, which is
+      the case for a release with no hotfixes.
+
+      The pull request comes from `merge-back/release-X.Y.Z`, a branch that
+      starts at the release branch's head, never from the release branch
+      itself: "Update branch" and conflict resolution on a pull request commit
+      the target INTO its head branch, and the release branch must keep
+      building exactly what is deployed. Later releases from the same line
+      move that branch forward and reuse the open pull request. Merge it with
+      a merge commit; a squash copies the changes instead of carrying the
+      release branch's history. Needs a token that can create branches and
+      pull requests (the default `auth-mode: public-app` can).
+    required: false
+    default: ''
+
+  release-branch-cleanup:
+    description: |
+      When true, a stable release deletes the release branches (`release/X.Y.Z`,
+      `releases/X.Y.Z`) of OLDER lines, by major.minor, whose head is already
+      in `release-branch-merge-back` (or the default branch when that is not
+      set). The released line and any newer one are kept, and so is an older
+      line with commits the target lacks, with a notice. What a deleted line
+      shipped stays reachable through its tags; `mode: cut-release-branch` run
+      on its latest tag recreates the branch to patch it. Off by default.
+    required: false
+    default: 'false'
 
   promote-from:
     description: |
@@ -1383,6 +1462,15 @@ outputs:
   promoted-from:
     description: 'The prerelease tag this run promoted to stable, prefix included (mode: release with promote-from). Empty on every other run.'
     value: ${{ steps.promote-source.outputs.source_tag }}
+  release-branch:
+    description: 'The release branch `mode: cut-release-branch` created (or found already on the commit), e.g. release/1.4.0. Empty in every other mode.'
+    value: ${{ steps.cut-release-branch.outputs.release-branch }}
+  merge-back-pr:
+    description: 'URL of the pull request merging the release branch back (mode: release with release-branch-merge-back), whether opened by this run or already open. Empty when there was nothing to merge back.'
+    value: ${{ steps.merge-back.outputs.merge-back-pr }}
+  release-branches-deleted:
+    description: 'Number of superseded release branches deleted (mode: release with release-branch-cleanup).'
+    value: ${{ steps.release-branch-cleanup.outputs.release-branches-deleted }}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEPS
@@ -1424,7 +1512,7 @@ runs:
 
     - name: Request public GitHub App token
       id: public-app-token
-      if: (inputs.mode == 'release' || inputs.mode == 'enable-auto-merge') && inputs.auth-mode == 'public-app'
+      if: (inputs.mode == 'release' || inputs.mode == 'enable-auto-merge' || inputs.mode == 'cut-release-branch') && inputs.auth-mode == 'public-app'
       shell: bash
       env:
         TOKEN_BROKER_URL: ${{ inputs.token-broker-url }}
@@ -1498,6 +1586,28 @@ runs:
         token: ${{ steps.auth.outputs.token }}
         submodules: ${{ inputs.submodules }}
 
+    # ── 2c. Cut a release branch (cut-release-branch mode) ──────────────────
+    # The whole mode. `release/X.Y.Z` is created through the API with the
+    # resolved token, from the commit the workflow runs on, once the version
+    # has been checked against every stable tag (the checkout above fetched
+    # them all). Nothing else runs in this mode: the release itself is the
+    # release workflow's, started by the new branch's push, so that every
+    # candidate of the line (the first one and every hotfix after it) comes
+    # out of the same workflow with the same settings.
+    - name: Cut release branch
+      id: cut-release-branch
+      if: inputs.mode == 'cut-release-branch'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        REPO_FULL: ${{ github.repository }}
+        VERSION_INPUT: ${{ inputs.version-override }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        REF_NAME: ${{ github.ref_name }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        TOKEN_SOURCE: ${{ steps.auth.outputs.source }}
+      run: "${GITHUB_ACTION_PATH}/scripts/cut-release-branch.sh"
+
     # ── 3. Resolve image name (ci + release) ─────────────────────────────────
     # image_name is optional. When the caller omits it, derive the base image
     # name from the repo's Docker Bake config — the same way the environment is
@@ -1549,6 +1659,7 @@ runs:
       env:
         PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
         EXTRA_BRANCH_PREFIXES: ${{ inputs.extra-branch-prefixes }}
+        BRANCH_NAME_PATTERNS: ${{ inputs.branch-name-patterns }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-branch-naming.sh"
 
     # Opt-in. The title arrives through env, never interpolated into the
@@ -2125,14 +2236,20 @@ runs:
         INPUT_RELEASE_BRANCH_VERSIONING: ${{ inputs.release-branch-versioning }}
         INPUT_FORCE_BUMP: ${{ inputs.force-bump }}
         DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
+        DETECT_IDENTIFIER: ${{ steps.detect-env.outputs.prerelease_identifier }}
+        RELEASE_BRANCH: ${{ github.ref_name }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
       run: |
         set -euo pipefail
 
+        # `resume` is push-release-tag.sh's RESUME_AT_HEAD for the tag below:
+        # only a release-line version sets it, because only that path can
+        # tell a re-run of its own release from another build holding the tag.
         emit() {
           echo "version=$1" >> "$GITHUB_OUTPUT"
           echo "tag=$2"     >> "$GITHUB_OUTPUT"
           echo "source=$3"  >> "$GITHUB_OUTPUT"
+          echo "resume=${4:-false}" >> "$GITHUB_OUTPUT"
         }
 
         # First, and alone: resolve-promote-from.sh has already refused a run
@@ -2149,7 +2266,7 @@ runs:
           exit 0
         fi
 
-        if [ "${INPUT_RELEASE_BRANCH_VERSIONING}" != "auto" ]; then
+        if [ "${INPUT_RELEASE_BRANCH_VERSIONING}" != "auto" ] && [ "${INPUT_RELEASE_BRANCH_VERSIONING}" != "branch" ]; then
           echo "release-branch-versioning=${INPUT_RELEASE_BRANCH_VERSIONING}: leaving the version to the configured tool."
           emit "" "" "tool"
           exit 0
@@ -2163,6 +2280,29 @@ runs:
           echo "force-bump=${INPUT_FORCE_BUMP} is set; not deriving a version from the branch name."
           emit "" "" "tool"
           exit 0
+        fi
+
+        # `branch`: a run on a release branch is versioned from that branch's
+        # own name, in every environment. This is the release-branch flow,
+        # where the team picks the version by cutting `release/X.Y.Z` and
+        # every build deployed before production is a candidate of it, and it
+        # is the only path that works when commits are not conventional:
+        # semantic-release would release nothing at all. Prerelease
+        # environments are included on purpose, unlike the merge-subject path
+        # below, because the branch being released IS the release line here
+        # rather than a branch some merge happened to mention.
+        if [ "${INPUT_RELEASE_BRANCH_VERSIONING}" == "branch" ]; then
+          LINE=$(BRANCH="${RELEASE_BRANCH:-}" TAG_PREFIX="${TAG_PREFIX}" \
+            IS_PRERELEASE="${DETECT_IS_PRERELEASE}" IDENTIFIER="${DETECT_IDENTIFIER:-}" \
+            "${GITHUB_ACTION_PATH}/scripts/resolve-release-line-version.sh")
+          if [ -n "${LINE}" ]; then
+            LINE_VERSION=$(sed -n 's/^version=//p' <<< "${LINE}")
+            LINE_TAG=$(sed -n 's/^tag=//p' <<< "${LINE}")
+            LINE_RESUME=$(sed -n 's/^resume=//p' <<< "${LINE}")
+            echo "::notice::Releasing ${LINE_TAG} from release branch ${RELEASE_BRANCH} (release-branch-versioning: branch)."
+            emit "${LINE_VERSION}" "${LINE_TAG}" "release-line" "${LINE_RESUME}"
+            exit 0
+          fi
         fi
 
         # Prerelease branches are excluded on purpose. GitFlow merges the
@@ -2523,6 +2663,7 @@ runs:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
         OVERRIDE_VERSION: ${{ steps.release-version.outputs.version }}
         OVERRIDE_TAG: ${{ steps.release-version.outputs.tag }}
+        OVERRIDE_RESUME: ${{ steps.release-version.outputs.resume }}
         PROMOTE_MARKER: ${{ steps.promote-source.outputs.marker }}
       run: |
         set -euo pipefail
@@ -2543,6 +2684,13 @@ runs:
         RESUME_AT_HEAD="false"
         if [ -n "${PROMOTE_MARKER}" ]; then
           MESSAGE="${MESSAGE}"$'\n\n'"${PROMOTE_MARKER}"
+          RESUME_AT_HEAD="true"
+        fi
+        # A release-line version is computed for this commit: the same tag on
+        # HEAD is this release being re-run, and the same tag anywhere else is
+        # a concurrent run that took the number, which must fail loudly rather
+        # than leave this commit with no release and a green run.
+        if [ "${OVERRIDE_RESUME:-}" == "true" ]; then
           RESUME_AT_HEAD="true"
         fi
 
@@ -3634,6 +3782,72 @@ runs:
         gh pr edit "${PR_URL}" --add-label "promotion" 2>/dev/null || true
 
     # ═════════════════════════════════════════════════════════════════════════
+    # RELEASE MODE — Release-branch housekeeping (opt-in)
+    # ═════════════════════════════════════════════════════════════════════════
+    #
+    # Both run only after a STABLE release has been published, which is the
+    # moment a release line's fixes are in production and an older line stops
+    # mattering. Neither can fail a release that is already out: each script
+    # warns and exits 0 on anything that goes wrong after its inputs check out.
+    # `@default` resolves from the event payload, which every trigger a release
+    # runs on carries, with the API as a fallback.
+
+    - name: Merge release branch back
+      id: merge-back
+      if: |
+        inputs.mode == 'release' &&
+        inputs.release-branch-merge-back != '' &&
+        steps.normalize.outputs.released == 'true' &&
+        steps.detect-env.outputs.is_prerelease == 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        REPO_FULL: ${{ github.repository }}
+        TARGET_INPUT: ${{ inputs.release-branch-merge-back }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        VERSION: ${{ steps.normalize.outputs.version }}
+        TAG: ${{ steps.normalize.outputs.tag }}
+        REF_NAME: ${{ github.ref_name }}
+        PROMOTE_SOURCE_COMMIT: ${{ steps.promote-source.outputs.commit }}
+      run: |
+        set -euo pipefail
+        TARGET="${TARGET_INPUT}"
+        if [ "${TARGET}" == "@default" ]; then
+          TARGET="${DEFAULT_BRANCH:-$(gh api "repos/${REPO_FULL}" --jq '.default_branch' 2>/dev/null || true)}"
+        fi
+        if [ -z "${TARGET}" ]; then
+          echo "::warning::release-branch-merge-back: could not resolve the default branch; no merge-back pull request was opened."
+          exit 0
+        fi
+        TARGET="${TARGET}" "${GITHUB_ACTION_PATH}/scripts/merge-back-release-branch.sh"
+
+    - name: Clean up superseded release branches
+      id: release-branch-cleanup
+      if: |
+        inputs.mode == 'release' &&
+        inputs.release-branch-cleanup == 'true' &&
+        steps.normalize.outputs.released == 'true' &&
+        steps.detect-env.outputs.is_prerelease == 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        REPO_FULL: ${{ github.repository }}
+        TARGET_INPUT: ${{ inputs.release-branch-merge-back }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        VERSION: ${{ steps.normalize.outputs.version }}
+      run: |
+        set -euo pipefail
+        TARGET="${TARGET_INPUT}"
+        if [ -z "${TARGET}" ] || [ "${TARGET}" == "@default" ]; then
+          TARGET="${DEFAULT_BRANCH:-$(gh api "repos/${REPO_FULL}" --jq '.default_branch' 2>/dev/null || true)}"
+        fi
+        if [ -z "${TARGET}" ]; then
+          echo "::warning::release-branch-cleanup: could not resolve the default branch; nothing was cleaned up."
+          exit 0
+        fi
+        TARGET="${TARGET}" "${GITHUB_ACTION_PATH}/scripts/clean-up-release-branches.sh"
+
+    # ═════════════════════════════════════════════════════════════════════════
     # RELEASE MODE — GitHub Projects aggregation (opt-in)
     # ═════════════════════════════════════════════════════════════════════════
     #
@@ -3809,4 +4023,9 @@ runs:
         IMAGES_SIGNED: ${{ steps.sign-image.outputs.signed_count }}
         AUTO_MERGE_METHOD: ${{ inputs.auto-merge-method }}
         DEPLOY_ONLY: ${{ steps.deploy-only.outputs.deploy_only }}
+        RELEASE_BRANCH: ${{ steps.cut-release-branch.outputs.release-branch }}
+        RELEASE_BRANCH_SHA: ${{ steps.cut-release-branch.outputs.release-branch-sha }}
+        CUT_OUTCOME: ${{ steps.cut-release-branch.outcome }}
+        MERGE_BACK_PR: ${{ steps.merge-back.outputs.merge-back-pr }}
+        BRANCHES_DELETED: ${{ steps.release-branch-cleanup.outputs.release-branches-deleted }}
       run: "${GITHUB_ACTION_PATH}/scripts/write-job-summary.sh"

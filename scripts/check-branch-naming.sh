@@ -43,7 +43,10 @@ if [[ -n "${extra}" ]]; then
   extra="$(IFS='|'; printf '%s' "${clean[*]}")"
 fi
 
-prefixes="${default_prefixes}|${PROMOTE_PREFIX}"
+# merge-back/ is the branch Diatreme opens a release branch's merge-back pull
+# request from (`release-branch-merge-back`). Like the promote prefix it is
+# Diatreme's own, so its own check must never refuse it.
+prefixes="${default_prefixes}|${PROMOTE_PREFIX}|merge-back"
 if [[ -n "${extra}" ]]; then
   prefixes="${prefixes}|${extra}"
 fi
@@ -63,6 +66,71 @@ fi
 if [[ "${branch}" =~ ${bot_prefixes} ]]; then
   echo "Branch '${branch}' is a bot-generated branch; skipping TBD naming check."
   exit 0
+fi
+
+# ── branch-name-patterns: the team's own convention, instead of the types ──
+# Each pattern is a whole branch name with placeholders, matched anchored at
+# both ends. Everything outside a placeholder is literal: the pattern is turned
+# into a regex here, character by character, so a `.` or `+` in it cannot
+# silently widen the check the way a raw regex would.
+#
+#   {issue}    an issue number: digits
+#   {version}  major.minor.patch, no leading zeros
+#   {name}     lowercase words joined by single hyphens: search-filter
+#   *          anything within one path segment (no `/`), at least one char
+#   **         anything at all, `/` included
+#
+# Diatreme's own branches (the promote prefix and merge-back/) and the bots are
+# accepted whatever the patterns say.
+pattern_to_regex() {
+  local p="$1" re="" c
+  while [[ -n "${p}" ]]; do
+    case "${p}" in
+      '{issue}'*)   re+='[0-9]+'; p="${p#'{issue}'}"; continue ;;
+      '{version}'*) re+='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'; p="${p#'{version}'}"; continue ;;
+      '{name}'*)    re+='[a-z0-9]+(-[a-z0-9]+)*'; p="${p#'{name}'}"; continue ;;
+      '**'*)        re+='.+'; p="${p#'**'}"; continue ;;
+      '*'*)         re+='[^/]+'; p="${p#'*'}"; continue ;;
+      '{'*)
+        echo "::error::branch-name-patterns: unknown placeholder in '$1'. Use {issue}, {version} or {name}." >&2
+        return 1
+        ;;
+    esac
+    c="${p:0:1}"
+    p="${p:1}"
+    case "${c}" in
+      '.'|'^'|'$'|'+'|'?'|'('|')'|'['|']'|'}'|'|'|\\) re+="\\${c}" ;;
+      *) re+="${c}" ;;
+    esac
+  done
+  printf '^%s$' "${re}"
+}
+
+if [[ -n "${BRANCH_NAME_PATTERNS:-}" ]]; then
+  if [[ "${branch}" =~ ^(${PROMOTE_PREFIX}|merge-back)/ ]]; then
+    echo "Branch '${branch}' is a Diatreme branch; accepted."
+    exit 0
+  fi
+  patterns=()
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "${line}" ]] && patterns+=("${line}")
+  done < <(printf '%s\n' "${BRANCH_NAME_PATTERNS}" | tr ',' '\n')
+  if [[ "${#patterns[@]}" -eq 0 ]]; then
+    echo "::error::branch-name-patterns is set but holds no pattern."
+    exit 1
+  fi
+  for pat in "${patterns[@]}"; do
+    regex=$(pattern_to_regex "${pat}") || exit 1
+    if [[ "${branch}" =~ ${regex} ]]; then
+      echo "Branch '${branch}' matches '${pat}'."
+      exit 0
+    fi
+  done
+  echo "::error::Branch '${branch}' does not match any allowed branch name."
+  echo "::error::Allowed: $(IFS=','; printf '%s' "${patterns[*]}" | sed 's/,/, /g')"
+  exit 1
 fi
 
 if [[ "${branch}" =~ ${allowed} ]]; then
