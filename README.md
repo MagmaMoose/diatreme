@@ -62,11 +62,8 @@ no token to rotate.
   DefectDojo. One project version per release, not one per pull request.
 - **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
   Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
-- **Multi-environment promotion** — dev → staging → prod with promotion PRs, a signed-off
-  RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs with Tremvok.
-- **Release branches** — cut `release/X.Y.Z` on demand, version its candidates and hotfixes
-  from the branch name (no conventional commits needed), then merge it back and clean up.
-  See [Releasing from release branches](https://docs.magmamoose.com/diatreme/how-to/release-from-release-branches/).
+- **Multi-environment promotion** — dev → staging → prod with promotion PRs, release branches
+  cut on demand, a signed-off RC promoted to stable by tag (never rebuilt), GitOps deploy PRs.
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
