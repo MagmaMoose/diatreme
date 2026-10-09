@@ -316,7 +316,7 @@ you merge:
 | Value | Checks | For |
 | --- | --- | --- |
 | `title` | the pull request title | squash merges (the title becomes the commit subject) and merge commits (the title is in the commit body) |
-| `commits` | every commit, apart from merge commits | rebase merges, where each commit lands as it is |
+| `commits` | every non-merge commit (subject and body) | rebase merges, where each commit lands as it is |
 | `title, commits` | both | |
 
 A reference is anything GitHub links to an issue: `#4567`, `GH-4567`,
