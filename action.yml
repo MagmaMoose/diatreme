@@ -15,7 +15,7 @@ inputs:
   mode:
     description: |
       Pipeline mode. One of:
-        ci                 Build Docker image and push pr-<N> to GHCR (run on pull_request events).
+        ci                 Build the Docker image and push it to the registry. On a pull request the tag is pr-<N>, which release promotes. On any other event (a push, a dispatch) it is <branch>-<sha7>-<commit time>, e.g. test-1a2b3c4-1760000000: immutable, and sortable by its last field, so a branch can be built and deployed before it has a pull request. The tag is the `image-tag` output.
         release            (default) Run versioning, promote Docker image, and optionally create a promotion PR (when deployment-model is tbd-pr and create-promotion-pr is true).
         enable-auto-merge  Enable native GitHub auto-merge on the PR referenced by `pr-number`. Intended for non-promotion (feature) PRs invoked from a separate `pull_request` workflow. The repository must have "Allow auto-merge" enabled and branch protection with at least one required status check on the target branch — both are GitHub prerequisites for auto-merge, not Diatreme ones.
     required: false
@@ -1347,6 +1347,9 @@ outputs:
       config, or the repository name on the no-bake Dockerfile path. Empty when
       none applies (versioning-only runs).
     value: ${{ steps.resolve-image.outputs.image_name }}
+  image-tag:
+    description: 'The tag mode: ci pushed its image under: pr-<N> on a pull request, <branch>-<sha7>-<commit time> on any other event, or version-override when set. Empty when no image was built.'
+    value: ${{ steps.build-pr-image.outputs.image-tag }}
   images-promoted:
     description: 'Number of release image(s) retagged rather than rebuilt: from a provenance-verified pr-<N> image, from the previous environment''s prerelease, or from the prerelease named by promote-from.'
     value: ${{ steps.promote-images.outputs.promoted_count }}
@@ -1503,7 +1506,7 @@ runs:
       run: "${GITHUB_ACTION_PATH}/scripts/resolve-image-name.sh"
 
     # ═════════════════════════════════════════════════════════════════════════
-    # CI MODE — build and push pr-<N> image
+    # CI MODE — build and push the CI image (pr-<N>, or <branch>-<sha7>-<time>)
     # ═════════════════════════════════════════════════════════════════════════
 
     # A deploy PR moves tags in the deploy-paths and nothing else, so there is
@@ -1589,12 +1592,18 @@ runs:
         username: ${{ inputs.registry-username || github.actor }}
         password: ${{ inputs.registry-password || steps.auth.outputs.registry-token }}
 
-    - name: Build and push pr-<N>
+    # The tag is decided by scripts/ci-image-tag.sh, once, and handed to the scan
+    # below through `image-tag`, so the two can never name different images:
+    # version-override, else pr-<N> on a pull request, else
+    # <branch>-<sha7>-<commit time>. Before that script a push had no number to
+    # put after `pr-` and pushed `<image>:pr-` for every branch.
+    - name: Build and push CI image
       id: build-pr-image
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only != 'true'
       shell: bash
       env:
-        VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
+        VERSION_OVERRIDE: ${{ steps.version-override.outputs.version }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
         REGISTRY: ${{ inputs.registry }}
         INPUT_PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
@@ -1610,6 +1619,12 @@ runs:
 
         OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
         export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+
+        # Exported: a bake file reads it as `${VERSION}` in its tags.
+        VERSION=$(VERSION_OVERRIDE="${VERSION_OVERRIDE}" PR_NUMBER="${PR_NUMBER}" REF_NAME="${REF_NAME}" \
+          "${GITHUB_ACTION_PATH}/scripts/ci-image-tag.sh")
+        export VERSION
+        echo "image-tag=${VERSION}" >> "$GITHUB_OUTPUT"
 
         echo "IMAGE_NAME: ${IMAGE_NAME}"
         echo "VERSION:    ${VERSION}"
@@ -1683,7 +1698,8 @@ runs:
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && inputs.image-scan == 'true' && steps.deploy-only.outputs.deploy_only != 'true'
       shell: bash
       env:
-        VERSION: ${{ inputs.version-override != '' && steps.version-override.outputs.version || format('pr-{0}', github.event.pull_request.number) }}
+        # The tag the build step just pushed, never re-derived here.
+        VERSION: ${{ steps.build-pr-image.outputs.image-tag }}
         OWNER: ${{ github.repository_owner }}
         INPUT_IMAGE_NAME: ${{ steps.resolve-image.outputs.image_name }}
         STRATEGY: ${{ steps.resolve-image.outputs.strategy }}
@@ -3750,6 +3766,7 @@ runs:
         # have the summary assert a push, or an enabled auto-merge, that
         # never happened. `release` mode already keys off `released`.
         BUILD_OUTCOME: ${{ steps.build-pr-image.outcome }}
+        CI_IMAGE_TAG: ${{ steps.build-pr-image.outputs.image-tag }}
         AUTO_MERGE_OUTCOME: ${{ steps.enable-auto-merge.outcome }}
         PROMOTE_OUTCOME: ${{ steps.promote-images.outcome }}
         VERSION: ${{ steps.normalize.outputs.version || steps.release-version.outputs.version || steps.version-override.outputs.version }}

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-30T00:00:00Z",
+  "generated": "2026-10-09T00:00:00Z",
   "summary": "Diatreme is a release/deployment orchestrator published to the GitHub Marketplace as a composite action, plus a hosted GitHub-App backend that brokers OIDC tokens for it. The action runs on the runner (bash, bats-tested); the broker runs as a service and is called over HTTP. Neither imports the other. Consumers pin the action by SHA, so input names, defaults and broker wire responses are frozen API surface.",
   "entrypoints": [
     "action.yml:runs.steps",
@@ -33,7 +33,7 @@
     },
     "image": {
       "path": "scripts/resolve-image-name.sh",
-      "purpose": "Image naming, build/push, and promotion. verify-promote-source.sh checks a pr-<N> image's provenance labels against the release commit's tree before promoting; stale images are rebuilt, not promoted. probe-image-tag.sh is the opt-in skip gate behind image-skip-existing: it reads the manifest of the release tag, and only a successful hit skips a promote - absence, an outage or an expired credential all mean do the work. Promote outcomes are tallied per image into the promoted/skipped/rebuilt outputs. promote-from is the one retag with no rebuild fallback: verify-promote-from-images.sh refuses a promotion whose source image is definitely absent (probe-image-tag.sh's VERDICT_FILE tells absent from unknown, and an absent verdict is confirmed with docker manifest inspect), a failed retag is an error, and :latest moves only when the promoted version is the highest stable one.",
+      "purpose": "Image naming, build/push, and promotion. verify-promote-source.sh checks a pr-<N> image's provenance labels against the release commit's tree before promoting; stale images are rebuilt, not promoted. probe-image-tag.sh is the opt-in skip gate behind image-skip-existing: it reads the manifest of the release tag, and only a successful hit skips a promote - absence, an outage or an expired credential all mean do the work. Promote outcomes are tallied per image into the promoted/skipped/rebuilt outputs. promote-from is the one retag with no rebuild fallback: verify-promote-from-images.sh refuses a promotion whose source image is definitely absent (probe-image-tag.sh's VERDICT_FILE tells absent from unknown, and an absent verdict is confirmed with docker manifest inspect), a failed retag is an error, and :latest moves only when the promoted version is the highest stable one. ci-image-tag.sh decides the mode: ci tag once: version-override, else pr-<N> on a pull request, else <branch>-<sha7>-<commit time> (immutable, sortable by its last field); the scan and job summary read it from the build step's image-tag output.",
       "exports": ["image", "tags"],
       "depends_on": []
     },

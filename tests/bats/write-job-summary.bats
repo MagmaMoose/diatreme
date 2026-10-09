@@ -351,3 +351,17 @@ no_line() {
   [ "$status" -eq 0 ]
   has_line '📋 Deploy-only change — it moves tags in the deploy-paths, so there is no image to build.'
 }
+
+@test "a ci build off a pull request reports the branch tag it pushed" {
+  run env MODE=ci REGISTRY=ghcr.io OWNER=Acme IMAGE_NAME=app \
+    CI_IMAGE_TAG=test-1a2b3c4-1760000000 BUILD_OUTCOME=success "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '✅ Pushed `ghcr.io/acme/app:test-1a2b3c4-1760000000`.'
+  no_line '✅ Pushed `ghcr.io/acme/app:pr-`.'
+}
+
+@test "the tag the build reports wins over one rebuilt from inputs" {
+  run env MODE=ci REGISTRY=ghcr.io OWNER=acme IMAGE_NAME=app PR_NUMBER=42 \
+    CI_IMAGE_TAG=pr-42 BUILD_OUTCOME=success "${SCRIPT}"
+  has_line '✅ Pushed `ghcr.io/acme/app:pr-42`.'
+}

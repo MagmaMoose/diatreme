@@ -43,6 +43,10 @@
 #   REGISTRY, OWNER,        parts of the image reference; whichever are
 #   IMAGE_NAME              supplied are joined into one pullable ref.
 #   PR_NUMBER               PR the run is about (ci, enable-auto-merge).
+#   CI_IMAGE_TAG            the tag a ci build pushed (pr-<N>, or
+#                           <branch>-<sha7>-<time> off a pull request). Wins
+#                           over VERSION and PR_NUMBER: it is the tag that was
+#                           actually pushed, not one rebuilt from inputs.
 #   IMAGES_PROMOTED,        promote tallies. The row appears whenever the
 #   IMAGES_SKIPPED,         promote ran, zeros included — "0 rebuilt" is the
 #   IMAGES_REBUILT          reassuring half of that row.
@@ -93,6 +97,7 @@ REGISTRY="${REGISTRY:-}"
 OWNER="${OWNER:-}"
 IMAGE_NAME="${IMAGE_NAME:-}"
 PR_NUMBER="${PR_NUMBER:-}"
+CI_IMAGE_TAG="${CI_IMAGE_TAG:-}"
 IMAGES_PROMOTED="${IMAGES_PROMOTED:-}"
 IMAGES_SKIPPED="${IMAGES_SKIPPED:-}"
 IMAGES_REBUILT="${IMAGES_REBUILT:-}"
@@ -169,8 +174,11 @@ image_ref() {
 
   case "${MODE}" in
     ci)
-      # ci publishes the mutable pr-<N> tag, unless a version override renamed it.
-      if [ -n "${VERSION}" ]; then tag="${VERSION}"
+      # The tag the build reports it pushed. Without it (a build that never ran
+      # or died first): the mutable pr-<N> tag, unless a version override
+      # renamed it.
+      if [ -n "${CI_IMAGE_TAG}" ]; then tag="${CI_IMAGE_TAG}"
+      elif [ -n "${VERSION}" ]; then tag="${VERSION}"
       elif [ -n "${PR_NUMBER}" ]; then tag="pr-${PR_NUMBER}"
       fi
       ;;
