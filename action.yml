@@ -842,6 +842,27 @@ inputs:
     default: ''
 
   # ── CI-specific ──────────────────────────────────────────────────────────
+  issue-reference:
+    description: |
+      Require a pull request to reference an issue (mode: ci, pull_request
+      events). Empty (the default) checks nothing. One or both of:
+
+        title    The pull request title must reference an issue. A squash
+                 merge makes the title the commit's subject, and a merge
+                 commit carries it in its body, so this is the check for
+                 either.
+        commits  Every commit in the pull request must, apart from merge
+                 commits. For rebase merges, where each commit lands as it is.
+
+      `title, commits` checks both. A reference is anything GitHub links to an
+      issue: `#123`, `GH-123`, `owner/repo#123` or an issue URL. Bot branches
+      (dependabot/, renovate/), Diatreme's own branches and deploy-only pull
+      requests (see `deploy-paths`) are not checked. With `title`, add
+      `edited` to the workflow's pull_request types so fixing the title
+      re-runs the check.
+    required: false
+    default: ''
+
   enforce_branch_naming:
     description: |
       Enforce TBD branch naming convention on PRs (mode: ci).
@@ -1640,6 +1661,20 @@ runs:
         EXTRA_BRANCH_PREFIXES: ${{ inputs.extra-branch-prefixes }}
         BRANCH_NAME_PATTERNS: ${{ inputs.branch-name-patterns }}
       run: "${GITHUB_ACTION_PATH}/scripts/check-branch-naming.sh"
+
+    # Opt-in. The title arrives through env, never interpolated into the
+    # script, because anyone who can open a pull request writes it.
+    - name: Check issue references
+      if: inputs.mode == 'ci' && inputs.issue-reference != '' && github.event_name == 'pull_request' && steps.deploy-only.outputs.deploy_only != 'true'
+      shell: bash
+      env:
+        ISSUE_REFERENCE: ${{ inputs.issue-reference }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        HEAD_REF: ${{ github.head_ref }}
+        PROMOTE_BRANCH_PREFIX: ${{ inputs.promote-branch-prefix }}
+      run: "${GITHUB_ACTION_PATH}/scripts/check-issue-reference.sh"
 
     - name: Validate version override
       id: version-override
