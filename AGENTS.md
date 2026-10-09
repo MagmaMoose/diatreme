@@ -86,6 +86,9 @@ npm run check   # typecheck + tests + wrangler dry-run
   uploaders. Reporting is visibility-first (non-blocking unless
   `image-scan-gate`); sinks are failure-isolated; a scanner that cannot run is a
   build error, not a finding.
+- `issue-reference` (opt-in, `mode: ci` on pull requests) fails a PR whose title
+  and/or non-merge commits reference no issue; `scripts/check-issue-reference.sh`
+  reads the commits from the local checkout, so it needs no extra token scope.
 - `mode: release` resolves auth, determines the target environment, delegates
   versioning to the selected backend, normalizes outputs, optionally promotes
   Docker images, publishes GitHub Releases, and can create promotion PRs.
