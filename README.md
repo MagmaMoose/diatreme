@@ -62,8 +62,8 @@ no token to rotate.
   DefectDojo. One project version per release, not one per pull request.
 - **Publish anywhere** — npm, NuGet, Maven, Gradle, RubyGems, containers, pip and signed
   Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
-- **Multi-environment promotion** — dev → staging → prod with promotion PRs, a signed-off
-  RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs with Tremvok.
+- **Multi-environment promotion** — dev → staging → prod with promotion PRs, release branches
+  cut on demand, a signed-off RC promoted to stable by tag (never rebuilt), GitOps deploy PRs.
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
@@ -84,14 +84,14 @@ flowchart LR
 
 | Input | Default | What it does |
 | --- | --- | --- |
-| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge`. |
+| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `cut-release-branch` · `enable-auto-merge`. |
 | `auth-mode` | `public-app` | Token source. The default uses the hosted App and needs only `id-token: write`. |
 | `versioning-tool` | `auto` | Detected from repo markers; override to pin one. |
 | `environment` | — | The environment this run releases to. |
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 103 inputs and every output →
+All 106 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation

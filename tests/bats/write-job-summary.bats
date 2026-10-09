@@ -351,3 +351,35 @@ no_line() {
   [ "$status" -eq 0 ]
   has_line '📋 Deploy-only change — it moves tags in the deploy-paths, so there is no image to build.'
 }
+
+# ── cut-release-branch and release-branch housekeeping ───────────────────────
+
+@test "a cut release branch is named, with the commit it came from" {
+  run env MODE=cut-release-branch RELEASE_BRANCH=release/1.4.0 \
+    RELEASE_BRANCH_SHA=0123456789abcdef0123456789abcdef01234567 CUT_OUTCOME=success "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '**Mode:** `cut-release-branch` · **Release branch:** `release/1.4.0`'
+  has_line '| Release branch | `release/1.4.0` |'
+  has_line '| Cut from | `0123456789ab` |'
+  has_line '✅ Cut `release/1.4.0` from `0123456789ab`. The release workflow cuts its first candidate from it.'
+}
+
+@test "a failed cut claims no branch" {
+  run env MODE=cut-release-branch CUT_OUTCOME=failure "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '> ❌ **Run did not complete** — no release branch was cut. See the failing step above.'
+}
+
+@test "a cut that never ran says so" {
+  run env MODE=cut-release-branch "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '📋 No release branch was cut.'
+}
+
+@test "a stable release reports its merge-back pull request and the branches it cleaned up" {
+  run env MODE=release VERSION=1.4.1 TAG=v1.4.1 RELEASED=true IS_PRERELEASE=false \
+    MERGE_BACK_PR=https://github.com/acme/app/pull/77 BRANCHES_DELETED=2 "${SCRIPT}"
+  [ "$status" -eq 0 ]
+  has_line '| Merge-back PR | https://github.com/acme/app/pull/77 |'
+  has_line '| Release branches deleted | 2 |'
+}

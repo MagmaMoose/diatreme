@@ -160,7 +160,17 @@ if [ -n "${ENVIRONMENTS}" ]; then
   STABLE_ENV=$(jq -rn --argjson envs "${ENVIRONMENTS}" '$envs | .[-1] // empty')
   if [ -n "${PREV_ENV}" ]; then
     EXPECTED=$(jq -rn --argjson ids "${IDS}" --arg e "${PREV_ENV}" '$ids[$e] // "rc"')
-    if [ "${IDENTIFIER}" != "${EXPECTED}" ]; then
+    # A candidate numbered without the dot (`1.5.0-rc4`, which is how a team
+    # that types its versions into version-override often writes them) is the
+    # same channel as `-rc.4`: the identifier is the channel's, followed by
+    # nothing but its number. Compared as strings, so an identifier that
+    # holds a regex metacharacter cannot widen the match.
+    TRAILING="${IDENTIFIER##*[!0-9]}"
+    CHANNEL="${IDENTIFIER}"
+    if [ -n "${TRAILING}" ] && [ "${TRAILING}" != "${IDENTIFIER}" ]; then
+      CHANNEL="${IDENTIFIER%"${TRAILING}"}"
+    fi
+    if [ "${IDENTIFIER}" != "${EXPECTED}" ] && [ "${CHANNEL}" != "${EXPECTED}" ]; then
       fail "'${SOURCE_TAG}' is a '${IDENTIFIER}' prerelease, but only '${EXPECTED}' prereleases are promoted to stable: '${EXPECTED}' is the identifier of '${PREV_ENV}', the environment before '${STABLE_ENV}' in environments. Promote a ${TAG_PREFIX}${VERSION}-${EXPECTED}.N tag instead."
     fi
   fi
