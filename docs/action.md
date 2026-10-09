@@ -290,6 +290,41 @@ allowlist of plain logins makes no API call at all. A membership lookup that
 cannot be completed **denies** the release — a check that did not happen is never
 read as approval.
 
+## Issue references
+
+`issue-reference` makes `mode: ci` fail a pull request that does not reference
+an issue, so every change on the main line traces back to one:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]   # edited: fixing the title re-runs it
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: MagmaMoose/diatreme@v2
+        with:
+          mode: ci
+          issue-reference: title
+```
+
+Check the part of the pull request that reaches the main line under the way
+you merge:
+
+| Value | Checks | For |
+| --- | --- | --- |
+| `title` | the pull request title | squash merges (the title becomes the commit subject) and merge commits (the title is in the commit body) |
+| `commits` | every commit, apart from merge commits | rebase merges, where each commit lands as it is |
+| `title, commits` | both | |
+
+A reference is anything GitHub links to an issue: `#4567`, `GH-4567`,
+`acme/app#4567` or an issue URL. A `#` right after a letter or digit (`C#12`)
+is not one. Bot branches, Diatreme's own branches and deploy-only pull requests
+(with `deploy-paths` set) are not checked. A failing commit check lists the
+commits to reword.
+
 ## Syncing the version into your manifests
 
 `version-file` writes the released version back into the files that carry it and
