@@ -79,7 +79,10 @@ npm run check   # typecheck + tests + wrangler dry-run
 ## Architecture Notes
 
 - `mode: ci` optionally enforces branch naming and builds/pushes Docker Bake
-  targets as `pr-<number>` tags.
+  targets as `pr-<number>` tags on a pull request, and as
+  `<branch>-<sha7>-<commit time>` on any other event. `scripts/ci-image-tag.sh`
+  decides the tag once; the scan and the job summary read it back from the
+  build step's `image-tag` output.
 - `mode: ci` can also scan the assembled `pr-<N>` image (Trivy) and route a
   CycloneDX SBOM to Dependency-Track and optional findings to DefectDojo, via
   `scripts/scan-image.sh` and the `scripts/upload-*-{dependency-track,defectdojo}.sh`

@@ -9,7 +9,8 @@ does not duplicate them so they cannot drift.
 ## Modes
 
 ```yaml
-# CI: build + push the pr-<N> image on pull_request events
+# CI: build + push the image. pr-<N> on a pull request,
+# <branch>-<sha7>-<commit time> on a push or a dispatch
 - uses: MagmaMoose/diatreme@v2
   with:
     mode: ci
@@ -71,6 +72,46 @@ own name (lowercased).
     architecture. Set `platforms: linux/amd64,linux/arm64` to produce a
     multi-arch manifest, exactly as bake would. For anything past a single image,
     prefer a `docker-bake.hcl`.
+
+## Building a branch without a pull request
+
+`mode: ci` runs on a push or a dispatch as well as on a pull request. Off a pull
+request there is no number for `pr-<N>`, so the image is tagged after the
+branch, the commit and the commit's time, and the tag comes back as the
+`image-tag` output:
+
+```yaml
+on:
+  push:
+    branches: [test]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: MagmaMoose/diatreme@v2
+        id: ci
+        with:
+          mode: ci
+      - run: echo "Built ${{ steps.ci.outputs.image-tag }}"   # test-1a2b3c4-1760000000
+```
+
+- **One tag per commit.** A deploy that moves to it rolls out, and the tag says
+  which commit is running. A re-run of the same commit pushes the same tag.
+- **Sortable.** The last field is the commit time in unix seconds, so image
+  automation can pick a branch's newest build. With Flux:
+  `filterTags: {pattern: '^test-[a-f0-9]+-(?P<ts>[0-9]+)$', extract: '$ts'}` and
+  `policy: {numerical: {order: asc}}`.
+- **For test environments, not releases.** `mode: release` promotes `pr-<N>`
+  images and rebuilds anything else, so a branch build never ships by itself.
+- The branch part is lowercased, `/` and anything else a tag cannot hold become
+  `-`, and it is cut to fit Docker's 128 characters: `feature/123-Search`
+  becomes `feature-123-search-1a2b3c4-1760000000`.
+
+`version-override` still names the image when it is set, on any event.
 
 ## Image scanning and SBOMs
 
