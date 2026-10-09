@@ -27,7 +27,7 @@ X on the release rather than a silent skip.
 
 ## The composite action
 
-`action.yml` is deliberately thin glue (~101 inputs, ~58 steps); the real logic lives
+`action.yml` is deliberately thin glue (~103 inputs, ~59 steps); the real logic lives
 in `scripts/*.sh`, which are `bats`-tested. Three modes:
 
 - **`ci`**: build and push the `pr-<N>` Docker image, optionally enforce branch
@@ -72,7 +72,9 @@ The production Python/Lambda broker serves one action-facing route:
 | --- | --- | --- |
 | `POST /token` | Exchange a GitHub Actions OIDC token for a short-lived App installation token. | OIDC (`id-token: write`) |
 
-The retired Cloudflare Worker (`worker/`) also implemented `POST /sign`, `GET /releases`, and `POST /webhook`; those routes are documented in [Broker API](reference/broker-api.md) but are not served by the production broker.
+The retired Cloudflare Worker (`worker/`) also implemented `POST /sign`, `GET /releases`, and
+`POST /webhook`; those routes are documented in [Broker API](reference/broker-api.md) but are
+not served by the production broker.
 
 OIDC verification pins the issuer before selecting its JWKS, so a forged `iss` can't
 select a foreign key. **GitHub Enterprise** (ghe.com / GHES) is opt-in via the
