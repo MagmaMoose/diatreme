@@ -44,7 +44,7 @@
 #   IMAGE_NAME              supplied are joined into one pullable ref.
 #   PR_NUMBER               PR the run is about (ci, enable-auto-merge).
 #   CI_IMAGE_TAG            the tag a ci build pushed (pr-<N>, or
-#                           <branch>-<sha7>-<time> off a pull request). Wins
+#                           <branch>-<sha7>-<time> on a push/dispatch). Wins
 #                           over VERSION and PR_NUMBER: it is the tag that was
 #                           actually pushed, not one rebuilt from inputs.
 #   IMAGES_PROMOTED,        promote tallies. The row appears whenever the
