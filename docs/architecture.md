@@ -72,7 +72,9 @@ The production Python/Lambda broker serves one action-facing route:
 | --- | --- | --- |
 | `POST /token` | Exchange a GitHub Actions OIDC token for a short-lived App installation token. | OIDC (`id-token: write`) |
 
-The retired Cloudflare Worker (`worker/`) also implemented `POST /sign`, `GET /releases`, and `POST /webhook`; those routes are documented in [Broker API](reference/broker-api.md) but are not served by the production broker.
+The retired Cloudflare Worker (`worker/`) also implemented `POST /sign`, `GET /releases`, and
+`POST /webhook`; those routes are documented in [Broker API](reference/broker-api.md) but are
+not served by the production broker.
 
 OIDC verification pins the issuer before selecting its JWKS, so a forged `iss` can't
 select a foreign key. **GitHub Enterprise** (ghe.com / GHES) is opt-in via the
