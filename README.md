@@ -64,6 +64,9 @@ no token to rotate.
   Helm charts listed on Artifact Hub, to GitHub Packages or public registries.
 - **Multi-environment promotion** — dev → staging → prod with promotion PRs, a signed-off
   RC promoted to stable by tag (never rebuilt), and GitOps deploy PRs with Tremvok.
+- **Release branches** — cut `release/X.Y.Z` on demand, version its candidates and hotfixes
+  from the branch name (no conventional commits needed), then merge it back and clean up.
+  See [Releasing from release branches](https://docs.magmamoose.com/diatreme/how-to/release-from-release-branches/).
 
 > **A wrong `tag-prefix` ships the wrong version, silently.** In a repo releasing several
 > packages, nothing errors: the release succeeds and the artifact publishes carrying a
@@ -84,14 +87,14 @@ flowchart LR
 
 | Input | Default | What it does |
 | --- | --- | --- |
-| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `enable-auto-merge`. |
+| `mode` | `release` | `ci` builds a PR image · `release` versions and promotes · `cut-release-branch` · `enable-auto-merge`. |
 | `auth-mode` | `public-app` | Token source. The default uses the hosted App and needs only `id-token: write`. |
 | `versioning-tool` | `auto` | Detected from repo markers; override to pin one. |
 | `environment` | — | The environment this run releases to. |
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 102 inputs and every output →
+All 105 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation

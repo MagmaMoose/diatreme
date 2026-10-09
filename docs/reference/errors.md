@@ -151,6 +151,28 @@ already holds the stable tag and it is not this promotion's:
 
 See [Promoting a release candidate to stable](../how-to/promote-a-release-candidate.md).
 
+### `cut-release-branch` refusals
+
+Every message in this table starts with `cut-release-branch:`, and none of them
+leaves a branch behind.
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `version-override is required` | The mode was run without a version. | Pass the version to cut, e.g. `1.4.0`. |
+| `'<v>' carries a prerelease part` | A release branch is named after the release number only. | Pass `X.Y.Z`. The candidates cut from the branch get their `-rc.N` themselves. |
+| `'<v>' is not a version` | The value is not `major.minor.patch`. | Fix the value. |
+| `<tag> is already released` | That version shipped. | Pick the next version, or run on that line's latest tag to reopen it for a patch. |
+| `<v> is not above <tag>, the newest release` | A new release branch takes a higher version than anything released. | Pick a higher version, or reopen the older line from its latest tag. |
+| `release/<v> already exists on <sha>` | A release branch is cut once. | Ship fixes to it through hotfix pull requests, or delete it first to start over. |
+| `could not create release/<v>` | The token cannot create the branch: no `contents: write`, or a ruleset restricting `release/*` creation that the App cannot bypass. | Grant it, or add the App to the ruleset's bypass list. |
+| `could not check whether release/<v> exists` | The branch lookup failed with something other than "not found". | Usually transient or a token problem; the message carries the API error. |
+
+`release-branch-merge-back` and `release-branch-cleanup` never fail a release:
+everything that goes wrong after the release is out (a merge-back branch that
+cannot absorb a conflict, a branch a ruleset protects from deletion) is a
+warning naming the manual step. See
+[Releasing from release branches](../how-to/release-from-release-branches.md).
+
 ## Getting more detail
 
 On the Cloudflare deployment, every verification failure logs one structured

@@ -27,7 +27,7 @@ X on the release rather than a silent skip.
 
 ## The composite action
 
-`action.yml` is deliberately thin glue (~101 inputs, ~58 steps); the real logic lives
+`action.yml` is deliberately thin glue (~105 inputs, ~63 steps); the real logic lives
 in `scripts/*.sh`, which are `bats`-tested. Three modes:
 
 - **`ci`**: build and push the `pr-<N>` Docker image, optionally enforce branch

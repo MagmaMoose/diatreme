@@ -14,7 +14,7 @@ This repository has two surfaces: the **composite action** (`action.yml` + `scri
 ## Action
 
 - Install: `uses: MagmaMoose/diatreme@v2` (floating major tag). The default `auth-mode: public-app` needs `id-token: write` and the hosted [Diatreme GitHub App](https://github.com/apps/diatreme).
-- Modes: `ci` (PR image build, branch-naming gate, optional image scan → CycloneDX SBOM to Dependency-Track + optional findings to DefectDojo), `release` (versioning, GitHub Release, image promotion, promotion PRs), `enable-auto-merge`.
+- Modes: `ci` (PR image build, branch-naming gate, optional image scan → CycloneDX SBOM to Dependency-Track + optional findings to DefectDojo), `release` (versioning, GitHub Release, image promotion, promotion PRs, release-branch merge-back and cleanup), `cut-release-branch` (create `release/X.Y.Z` for a chosen version), `enable-auto-merge`.
 - Promotion by tag: `promote-from: v1.5.0-rc.3` (mode `release`) releases that existing prerelease as `v1.5.0`, on the prerelease's commit, by retagging its image. It never rebuilds, and re-running resumes.
 - GitOps deploys: Tremvok's `gitops-pr` opens deploy PRs from the GitHub Release Diatreme publishes. `deploy-paths: '["k8s/overlays/acc", "k8s/overlays/prd"]'` makes `mode: ci` skip the image build for a PR that only moves tags there, and makes `mode: release` refuse a push that only changes them (a merged deploy PR), before anything is tagged.
 - Versioning tools: `auto` (default; detect from repo markers under `working-directory`), `semantic-release-python`, `semantic-release-npm`, `gitversion`, `release-please`.
