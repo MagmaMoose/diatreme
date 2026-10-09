@@ -3,7 +3,7 @@
 Two independent surfaces, talking over HTTP. Neither imports the other.
 
 - **Composite action** — `action.yml` (~2740 lines, ~83 inputs, ~44 steps) + `scripts/*.sh`.
-  Marketplace-published, runs on the runner. Modes: `ci`, `release`, `enable-auto-merge`.
+  Marketplace-published, runs on the runner. Modes: `ci`, `release`, `cut-release-branch`, `enable-auto-merge`.
   Thin glue; logic is bash in `scripts/`, bats-tested.
 - **Hosted broker** — the GitHub-App backend called for `auth-mode: public-app`. `/token`
   (OIDC → App installation token), `/sign`, `/releases`, `/webhook`. GHE opt-in via `GHE_*`.

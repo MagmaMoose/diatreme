@@ -102,6 +102,21 @@ npm run check   # typecheck + tests + wrangler dry-run
   (`RESUME_AT_HEAD` and the `Promoted-From:` marker in
   `scripts/push-release-tag.sh`).
 - `mode: enable-auto-merge` enables native GitHub auto-merge for a specific PR.
+- The release-branch flow is four opt-in pieces. `mode: cut-release-branch`
+  (`scripts/cut-release-branch.sh`) creates `release/X.Y.Z` through the API for
+  the version in `version-override`, refusing a released or non-increasing one
+  unless HEAD is a stable tag of that line (reopening it). `release-branch-versioning:
+  branch` (`scripts/resolve-release-line-version.sh`) versions a run ON a release
+  branch from its name in any environment: X.Y.Z until it ships, then the next free
+  patch, `-<id>.N` candidates, a re-run resumes its own tag (RESUME_AT_HEAD) and an
+  already-released commit is a no-op. After a stable release,
+  `release-branch-merge-back` (`scripts/merge-back-release-branch.sh`) opens the
+  merge-back PR from a `merge-back/` branch, never the release branch, and
+  `release-branch-cleanup` (`scripts/clean-up-release-branches.sh`) deletes older,
+  fully merged release lines. Both warn instead of failing a published release.
+- `branch-name-patterns` replaces the built-in branch types in `mode: ci` with
+  whole-name patterns (`{issue}`, `{version}`, `{name}`, `*`, `**`), converted to a
+  regex character by character so nothing outside a placeholder is a metacharacter.
 - `deploy-paths` (opt-in) names the directories deploy PRs write (Tremvok's `gitops-pr`
   opens those; Diatreme does not). `scripts/check-deploy-only-change.sh` is its one script:
   it skips the `mode: ci` image build for a PR that changes nothing else, and refuses a

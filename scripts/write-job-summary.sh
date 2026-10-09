@@ -29,7 +29,7 @@
 # as one report rather than three dialects.
 #
 # Env — all optional; an absent value drops its row:
-#   MODE                    ci | release | enable-auto-merge.
+#   MODE                    ci | release | cut-release-branch | enable-auto-merge.
 #   VERSION, TAG            released version and its git tag.
 #   ENVIRONMENT             resolved target environment.
 #   IS_PRERELEASE           "true"/"false".
@@ -68,6 +68,13 @@
 #                           where the step failed. Absent ⇒ no success claim.
 #   DEPLOY_ONLY             "true" when a ci run skipped the image build
 #                           because the PR changes nothing but deploy-paths.
+#   RELEASE_BRANCH,         the branch a cut-release-branch run created, and
+#   RELEASE_BRANCH_SHA      the commit it was cut from.
+#   CUT_OUTCOME             the `steps.<id>.outcome` of the cut. Same reason as
+#                           BUILD_OUTCOME: the version is an input, present
+#                           whether or not the branch was created.
+#   MERGE_BACK_PR           URL of the release branch's merge-back pull request.
+#   BRANCHES_DELETED        superseded release branches deleted.
 #   GITHUB_STEP_SUMMARY     file to append to. Unset/empty ⇒ silent no-op,
 #                           which is also what makes this testable.
 #
@@ -107,6 +114,11 @@ BUILD_OUTCOME="${BUILD_OUTCOME:-}"
 AUTO_MERGE_OUTCOME="${AUTO_MERGE_OUTCOME:-}"
 PROMOTE_OUTCOME="${PROMOTE_OUTCOME:-}"
 DEPLOY_ONLY="${DEPLOY_ONLY:-}"
+RELEASE_BRANCH="${RELEASE_BRANCH:-}"
+RELEASE_BRANCH_SHA="${RELEASE_BRANCH_SHA:-}"
+CUT_OUTCOME="${CUT_OUTCOME:-}"
+MERGE_BACK_PR="${MERGE_BACK_PR:-}"
+BRANCHES_DELETED="${BRANCHES_DELETED:-}"
 
 LINES=()      # the rendered document, one Markdown line per entry
 ROWS=()       # metric table rows that had a value
@@ -228,6 +240,16 @@ status_line() {
         printf '📋 Versioning-only run — no image built.'
       fi
       ;;
+    cut-release-branch)
+      if [ "${CUT_OUTCOME}" = "failure" ]; then
+        printf '> ❌ **Run did not complete** — no release branch was cut. See the failing step above.'
+      elif [ "${CUT_OUTCOME}" = "success" ] && [ -n "${RELEASE_BRANCH}" ]; then
+        printf "✅ Cut %s%s. The release workflow cuts its first candidate from it." \
+          "$(tick "${RELEASE_BRANCH}")" "${RELEASE_BRANCH_SHA:+ from $(tick "${RELEASE_BRANCH_SHA:0:12}")}"
+      else
+        printf '📋 No release branch was cut.'
+      fi
+      ;;
     enable-auto-merge)
       target="the pull request"
       [ -z "${PR_NUMBER}" ] || target="#${PR_NUMBER}"
@@ -273,6 +295,9 @@ case "${MODE}" in
       fact "PR" "${PR_NUMBER:+#${PR_NUMBER}}"
     fi
     ;;
+  cut-release-branch)
+    fact "Release branch" "${RELEASE_BRANCH}"
+    ;;
   enable-auto-merge)
     fact "PR" "${PR_NUMBER:+#${PR_NUMBER}}"
     fact "Method" "${AUTO_MERGE_METHOD}"
@@ -302,6 +327,10 @@ if [ -n "${IMAGE_FINDINGS}" ] || [ "${IMAGE_SCANNED}" = "true" ]; then
   row "Scan findings${IMAGE_SCAN_SEVERITY:+ (${IMAGE_SCAN_SEVERITY})}" "${IMAGE_FINDINGS:-0}"
 fi
 row "Images signed" "${IMAGES_SIGNED}"
+row "Release branch" "$(tick "${RELEASE_BRANCH}")"
+row "Cut from" "$(tick "${RELEASE_BRANCH_SHA:0:12}")"
+row "Merge-back PR" "${MERGE_BACK_PR}"
+row "Release branches deleted" "${BRANCHES_DELETED}"
 
 if [ "${#ROWS[@]}" -gt 0 ]; then
   emit "| Metric | Value |"
