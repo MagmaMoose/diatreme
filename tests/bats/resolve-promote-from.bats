@@ -175,6 +175,28 @@ promoted_tag() {
   [ "$status" -eq 0 ]
 }
 
+@test "a candidate numbered without the dot is the same channel" {
+  # `version-override: 1.5.0-rc1` is how a team that numbers candidates by
+  # hand often writes them. It is still the `rc` channel.
+  release_line
+  git tag v1.5.0-rc4
+  promote v1.5.0-rc4 ENVIRONMENTS="${ENVS}" PRERELEASE_IDENTIFIERS="${IDS}"
+  [ "$status" -eq 0 ]
+  [ "$(out version)" = "1.5.0" ]
+  [ "$(out source_tag)" = "v1.5.0-rc4" ]
+}
+
+@test "an identifier that only starts like the channel is still refused" {
+  release_line
+  git tag v1.5.0-rcx.1
+  git tag v1.5.0-dev1
+  promote v1.5.0-rcx.1 ENVIRONMENTS="${ENVS}" PRERELEASE_IDENTIFIERS="${IDS}"
+  [ "$status" -eq 1 ]
+  promote v1.5.0-dev1 ENVIRONMENTS="${ENVS}" PRERELEASE_IDENTIFIERS="${IDS}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a 'dev1' prerelease"* ]]
+}
+
 @test "the channel is the environment before the last, wherever that is" {
   commit "one"; git tag v2.0.0-rc.1; git tag v2.0.0-tst.4
   run env TAG_PREFIX=v PROMOTE_FROM=v2.0.0-tst.4 \

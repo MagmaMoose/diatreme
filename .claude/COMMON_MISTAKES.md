@@ -111,3 +111,16 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   before versioning when they forget. A warning would not do: by the release tail the tag is
   out. Opening deploy PRs was here for one release (v2.18.0) and moved to Tremvok, because it
   changes what an environment runs; do not bring it back.
+
+- **A merge-back PR must never come from the release branch itself.** "Update branch",
+  conflict resolution and a required up-to-date check all commit the BASE into the HEAD
+  branch, so a `release/1.4.0 → master` PR pulls unreleased master work into what the next
+  hotfix candidate builds, with every step green. `scripts/merge-back-release-branch.sh`
+  opens it from `merge-back/release-1.4.0` instead; keep it that way, and keep `merge-back/`
+  in check-branch-naming.sh's always-accepted set or the PR fails its own naming check.
+- **Release-line versioning must never resume a STABLE tag.** On a commit already released
+  as `v1.4.0` (a promotion tags the candidate's commit), `resolve-release-line-version.sh`
+  hands back `v1.4.0` with `resume=false`, which push-release-tag.sh turns into a no-op.
+  With resume on, a re-run in the `acc` environment would "finish" v1.4.0 by retagging the
+  `pr-<N>` image over the promoted one. Candidates (`-rc.N`) at HEAD are resumed; stable tags
+  never are. `tests/bats/release-branch-flow.bats` holds both.

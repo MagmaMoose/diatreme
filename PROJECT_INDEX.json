@@ -9,7 +9,7 @@
   "modules": {
     "action": {
       "path": "action.yml",
-      "purpose": "Marketplace composite action: ~101 inputs, ~58 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
+      "purpose": "Marketplace composite action: ~105 inputs, ~63 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs -> release-branch merge-back and cleanup), cut-release-branch (create release/X.Y.Z for version-override), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
       "exports": ["inputs", "outputs", "runs.steps"],
       "depends_on": ["auth", "versioning", "image", "sbom-sinks", "packaging", "pr-automation", "job-summary"]
     },
@@ -27,7 +27,7 @@
     },
     "versioning": {
       "path": "scripts/detect-versioning-tool.sh",
-      "purpose": "Two-tier autodetect of the versioning backend (semantic-release, python-semantic-release, GitVersion, release-please), then delegates. versioning-tool: auto is the default. inject-version-files.sh persists the released version back into the tracked manifest(s) named by version-file - several paths and globs, all updated in ONE commit - and warns rather than fails, since the tag and Release are already published when it runs.",
+      "purpose": "Two-tier autodetect of the versioning backend (semantic-release, python-semantic-release, GitVersion, release-please), then delegates. versioning-tool: auto is the default. inject-version-files.sh persists the released version back into the tracked manifest(s) named by version-file - several paths and globs, all updated in ONE commit - and warns rather than fails, since the tag and Release are already published when it runs. resolve-release-line-version.sh is release-branch-versioning: branch: a run on release/X.Y.Z is versioned from the branch name in any environment (X.Y.Z until it ships, then the next free patch, -<id>.N candidates), with no versioning tool.",
       "exports": ["tool", "version", "tag"],
       "depends_on": []
     },
@@ -51,7 +51,7 @@
     },
     "pr-automation": {
       "path": "scripts/build-promotion-pr-body.sh",
-      "purpose": "Promotion PR bodies, auto-merge enablement, branch-naming gate, and GitHub Projects/ClickUp linkage. check-deploy-only-change.sh is deploy-paths: it skips the ci image build for a PR that only moves tags in those directories, and refuses a release of a push that only changes them (a merged deploy PR, which Tremvok's gitops-pr opens).",
+      "purpose": "Promotion PR bodies, auto-merge enablement, branch-naming gate, and GitHub Projects/ClickUp linkage. check-deploy-only-change.sh is deploy-paths: it skips the ci image build for a PR that only moves tags in those directories, and refuses a release of a push that only changes them (a merged deploy PR, which Tremvok's gitops-pr opens). The release-branch flow lives here too: cut-release-branch.sh (mode: cut-release-branch) creates release/X.Y.Z through the API after checking the version is new; merge-back-release-branch.sh opens the merge-back PR from a merge-back/ branch after a stable release from a release line; clean-up-release-branches.sh deletes older, fully merged release lines. check-branch-naming.sh also takes branch-name-patterns (whole-name patterns with {issue}/{version}/{name}).",
       "exports": [],
       "depends_on": []
     },

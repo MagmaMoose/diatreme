@@ -26,6 +26,12 @@ does not duplicate them so they cannot drift.
   with:
     mode: enable-auto-merge
     pr-number: ${{ github.event.pull_request.number }}
+
+# Cut release/1.4.0 from the commit the workflow runs on
+- uses: MagmaMoose/diatreme@v2
+  with:
+    mode: cut-release-branch
+    version-override: 1.4.0
 ```
 
 ## Versioning-tool detection
@@ -245,6 +251,28 @@ The full walkthrough, including a complete workflow and what each refusal means,
 is in
 [Promoting a release candidate to stable](how-to/promote-a-release-candidate.md).
 
+## Release branches
+
+For a team that releases on a schedule: features merge into the main line, a
+release branch is cut when a release is due, its build goes to acceptance, and
+that same build is promoted to production. Hotfixes land on the release branch
+and are merged back.
+
+- `mode: cut-release-branch` creates `release/X.Y.Z` from the commit the
+  workflow runs on, for the version in `version-override`, after checking the
+  version is new.
+- `release-branch-versioning: branch` versions every run on a release branch
+  from its name: `v1.4.0-rc.N` until 1.4.0 ships, then `v1.4.1-rc.1` for the
+  first hotfix. No versioning tool runs, so commits need not be conventional.
+- `promote-from` releases a signed-off candidate as its stable version (above).
+- `release-branch-merge-back` opens the pull request that merges the release
+  branch back after a stable release from it, from a `merge-back/` branch so the
+  release branch itself is never updated from the main line.
+  `release-branch-cleanup` deletes older release branches that are fully merged.
+
+The walkthrough, with the three workflows it takes, is
+[Releasing from release branches](how-to/release-from-release-branches.md).
+
 ## Deploying by pull request
 
 Diatreme releases; opening the pull requests that deploy a release to GitOps overlays is
@@ -281,6 +309,29 @@ jobs:
   release, which opens a deploy PR for the new version, whose merge would be released in turn.
   The push trigger's `paths-ignore` is where that belongs; the refusal is for when it is
   missing.
+
+## Branch naming
+
+`mode: ci` checks a pull request's branch name when `enforce_branch_naming` is
+on (the default). It accepts `<type>/<description>` for the built-in types
+(`feat`, `fix`, `chore`, `hotfix`, `release`, …), plus any you add in
+`extra-branch-prefixes`.
+
+A team with its own convention replaces the types with whole-name patterns:
+
+```yaml
+- uses: MagmaMoose/diatreme@v2
+  with:
+    mode: ci
+    branch-name-patterns: |
+      feature/{issue}-{name}
+      hotfix/{issue}-{name}
+```
+
+`{issue}` is a number, `{version}` is `major.minor.patch`, `{name}` is
+lowercase words joined by hyphens, `*` is one path segment and `**` is any
+depth. Everything else is literal and the whole name has to match. Bot
+branches and Diatreme's own (`promote/`, `merge-back/`) always pass.
 
 ## Who may cut a release
 
@@ -330,6 +381,41 @@ Team entries need the resolved token to be able to read org team membership; an
 allowlist of plain logins makes no API call at all. A membership lookup that
 cannot be completed **denies** the release — a check that did not happen is never
 read as approval.
+
+## Issue references
+
+`issue-reference` makes `mode: ci` fail a pull request that does not reference
+an issue, so every change on the main line traces back to one:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]   # edited: fixing the title re-runs it
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: MagmaMoose/diatreme@v2
+        with:
+          mode: ci
+          issue-reference: title
+```
+
+Check the part of the pull request that reaches the main line under the way
+you merge:
+
+| Value | Checks | For |
+| --- | --- | --- |
+| `title` | the pull request title | squash merges (the title becomes the commit subject) and merge commits (the title is in the commit body) |
+| `commits` | every non-merge commit (subject and body) | rebase merges, where each commit lands as it is |
+| `title, commits` | both | |
+
+A reference is anything GitHub links to an issue: `#4567`, `GH-4567`,
+`acme/app#4567` or an issue URL. A `#` right after a letter or digit (`C#12`)
+is not one. Bot branches, Diatreme's own branches and deploy-only pull requests
+(with `deploy-paths` set) are not checked. A failing commit check lists the
+commits to reword.
 
 ## Syncing the version into your manifests
 
