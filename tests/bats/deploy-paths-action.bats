@@ -33,7 +33,7 @@ input_default() {
 
 @test "every ci image step skips a deploy-only pull request" {
   for s in "Set up QEMU" "Set up Docker Buildx (CI)" "Log in to container registry (CI)" \
-           "Build and push pr-<N>" "Install Trivy" "Scan image and report"; do
+           "Build and push CI image" "Install Trivy" "Scan image and report"; do
     step_head "${s}" | grep -qF "steps.deploy-only.outputs.deploy_only != 'true'" \
       || { echo "not gated: ${s}"; false; }
   done

@@ -32,6 +32,13 @@
 
 Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
 
+- **The ci image tag is decided once, in `scripts/ci-image-tag.sh`.** The build and the
+  scan each used to derive `pr-<N>` inline, so a push (no PR number) built and scanned
+  `<image>:pr-`, one tag every branch overwrote. The scan now reads
+  `steps.build-pr-image.outputs.image-tag`; never re-derive the tag in another step, or the
+  scan can inspect an image the build did not push. `tests/bats/ci-image-build.bats` fails
+  if `format('pr-{0}'` comes back anywhere in action.yml.
+
 - **The image sinks fire in `mode: release` ONLY — never wire them into the `pr-<N>` scan.**
   Dependency-Track and DefectDojo describe what is *deployed*. A pr-`<N>` upload succeeds and
   looks completely correct, which is why this is easy to get wrong: the damage is cumulative,
