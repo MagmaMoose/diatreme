@@ -75,6 +75,18 @@ collect() {
   run bash "$SCRIPT"
 }
 
+@test "release collection uses the web host on a data residency tenant" {
+  export GITHUB_SERVER_URL=https://tenant.ghe.com
+  export GITHUB_API_URL=https://api.tenant.ghe.com
+  sed 's#https://github.example.test/#https://tenant.ghe.com/#g' "$FIXTURE_RELEASES" > "$TEST_ROOT/tenant-releases.json"
+  mv "$TEST_ROOT/tenant-releases.json" "$FIXTURE_RELEASES"
+  collect
+  [ "$status" -eq 0 ]
+  run cat "$FIXTURE_API_LOG"
+  [[ "$output" == *"--hostname tenant.ghe.com"* ]]
+  [[ "$output" != *"--hostname api.tenant.ghe.com"* ]]
+}
+
 @test "upgrade aggregates every stable app release across pages against same-environment suite baseline" {
   collect
   [ "$status" -eq 0 ]

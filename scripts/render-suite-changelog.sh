@@ -41,11 +41,11 @@ if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
 owner, repo = repository.split('/')
 branch = os.environ['CURRENT_BRANCH']
 server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com').rstrip('/')
-host = urlparse(os.environ.get('GITHUB_API_URL', server)).hostname
+host = urlparse(server).hostname
 if host == 'api.github.com':
     host = 'github.com'
 if not host:
-    fail('GITHUB_API_URL needs a hostname')
+    fail('GITHUB_SERVER_URL needs a hostname')
 prefix = os.environ.get('TAG_PREFIX', 'v')
 version = os.environ['VERSION']
 tag = version if prefix and version.startswith(prefix) else prefix + version
