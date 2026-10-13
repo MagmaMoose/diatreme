@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-09T00:00:00Z",
+  "generated": "2026-10-13T00:00:00Z",
   "summary": "Diatreme is a release/deployment orchestrator published to the GitHub Marketplace as a composite action, plus a hosted GitHub-App backend that brokers OIDC tokens for it. The action runs on the runner (bash, bats-tested); the broker runs as a service and is called over HTTP. Neither imports the other. Consumers pin the action by SHA, so input names, defaults and broker wire responses are frozen API surface.",
   "entrypoints": [
     "action.yml:runs.steps",
@@ -10,31 +10,60 @@
     "action": {
       "path": "action.yml",
       "purpose": "Marketplace composite action: ~105 inputs, ~63 steps, thin glue only. Modes: ci (build/push pr-<N> image, branch-naming gate, optional Trivy scan), release (guardrails -> versioning -> GitHub Release -> version-file injection -> image promotion -> promotion PRs -> release-branch merge-back and cleanup), cut-release-branch (create release/X.Y.Z for version-override), enable-auto-merge. Both release guardrails (repo admin, release-actor allowlist) sit before the versioning tool is resolved, so a refusal costs no tag, no Release and no image. With promote-from, release promotes a named prerelease tag to its stable version instead of cutting one: resolve-promote-from.sh settles the tag, commit and stable version right after checkout, a second checkout moves the workspace to the prerelease's commit, the environment is forced to the last one whatever the deployment model says, and the source images are confirmed to exist below the guardrails and before the tag is cut. A final if: always() step renders what the run resolved into the GitHub job summary, in every mode and on a failed run too.",
-      "exports": ["inputs", "outputs", "runs.steps"],
-      "depends_on": ["auth", "versioning", "image", "sbom-sinks", "packaging", "pr-automation", "job-summary"]
+      "exports": [
+        "inputs",
+        "outputs",
+        "runs.steps"
+      ],
+      "depends_on": [
+        "auth",
+        "versioning",
+        "image",
+        "sbom-sinks",
+        "packaging",
+        "pr-automation",
+        "job-summary"
+      ]
     },
     "auth": {
       "path": "scripts/resolve-auth-token.sh",
       "purpose": "Chooses the token for git/release ops across auth-modes (public-app, private-app, github-token, auto). The public-app path calls the hosted broker. check-release-actor.sh is the authorization half: from allowed-release-actors-from onward it admits only the logins and org teams named in allowed-release-actors, on every trigger. It fails closed - a clean team-membership 404 is the only not-a-member answer it trusts; a missing scope, a rate limit or a 5xx denies the release.",
-      "exports": ["token", "source", "registry-token"],
-      "depends_on": ["broker-client"]
+      "exports": [
+        "token",
+        "source",
+        "registry-token"
+      ],
+      "depends_on": [
+        "broker-client"
+      ]
     },
     "broker-client": {
       "path": "scripts/request-public-app-token.sh",
       "purpose": "Exchanges the runner's Actions OIDC token for a repo-scoped App installation token at the hosted broker. Falls back to a secondary broker on connection failure or 5xx, never on 4xx.",
-      "exports": ["token", "expires-at", "repository"],
+      "exports": [
+        "token",
+        "expires-at",
+        "repository"
+      ],
       "depends_on": []
     },
     "versioning": {
       "path": "scripts/detect-versioning-tool.sh",
       "purpose": "Two-tier autodetect of the versioning backend (semantic-release, python-semantic-release, GitVersion, release-please), then delegates. versioning-tool: auto is the default. inject-version-files.sh persists the released version back into the tracked manifest(s) named by version-file - several paths and globs, all updated in ONE commit - and warns rather than fails, since the tag and Release are already published when it runs. resolve-release-line-version.sh is release-branch-versioning: branch: a run on release/X.Y.Z is versioned from the branch name in any environment (X.Y.Z until it ships, then the next free patch, -<id>.N candidates), with no versioning tool.",
-      "exports": ["tool", "version", "tag"],
+      "exports": [
+        "tool",
+        "version",
+        "tag"
+      ],
       "depends_on": []
     },
     "image": {
       "path": "scripts/resolve-image-name.sh",
       "purpose": "Image naming, build/push, and promotion. verify-promote-source.sh checks a pr-<N> image's provenance labels against the release commit's tree before promoting; stale images are rebuilt, not promoted. probe-image-tag.sh is the opt-in skip gate behind image-skip-existing: it reads the manifest of the release tag, and only a successful hit skips a promote - absence, an outage or an expired credential all mean do the work. Promote outcomes are tallied per image into the promoted/skipped/rebuilt outputs. promote-from is the one retag with no rebuild fallback: verify-promote-from-images.sh refuses a promotion whose source image is definitely absent (probe-image-tag.sh's VERDICT_FILE tells absent from unknown, and an absent verdict is confirmed with docker manifest inspect), a failed retag is an error, and :latest moves only when the promoted version is the highest stable one. ci-image-tag.sh decides the mode: ci tag once: version-override, else pr-<N> on a pull request, else <branch>-<sha7>-<commit time> (immutable, sortable by its last field); the scan and job summary read it from the build step's image-tag output.",
-      "exports": ["image", "tags"],
+      "exports": [
+        "image",
+        "tags"
+      ],
       "depends_on": []
     },
     "sbom-sinks": {
@@ -63,33 +92,54 @@
     },
     "broker": {
       "path": "broker/app",
-      "purpose": "Python/Lambda broker — the active production implementation. Framework-free (status, body) decision functions in broker.py; AWS Lambda + API Gateway adapter in lambda_handler.py; FastAPI shell in main.py for local dev only (excluded from the Lambda zip). Endpoints: POST /token (OIDC → App installation token), GET /healthz, GET /readyz. Serves both api.diatreme.magmamoose.com and broker-diatreme.magmamoose.com. Config via SSM Parameter Store in production, env vars locally. JWKS snapshots in DynamoDB rescue verifications when GitHub's JWKS endpoint is unreachable. GHE support: a second optional App identity triggered by the token's verified issuer.",
-      "exports": ["handle_token", "handle_healthz", "handle_readyz"],
+      "purpose": "Python/Lambda broker \u2014 the active production implementation. Framework-free (status, body) decision functions in broker.py; AWS Lambda + API Gateway adapter in lambda_handler.py; FastAPI shell in main.py for local dev only (excluded from the Lambda zip). Endpoints: POST /token (OIDC \u2192 App installation token), GET /healthz, GET /readyz. Serves both api.diatreme.magmamoose.com and broker-diatreme.magmamoose.com. Config via SSM Parameter Store in production, env vars locally. JWKS snapshots in DynamoDB rescue verifications when GitHub's JWKS endpoint is unreachable. GHE support: a second optional App identity triggered by the token's verified issuer.",
+      "exports": [
+        "handle_token",
+        "handle_healthz",
+        "handle_readyz"
+      ],
       "depends_on": []
     },
     "broker-tests": {
       "path": "broker/tests",
       "purpose": "pytest suites for the Lambda broker. test_token.py covers the full mint ladder; test_lambda_handler.py covers routing and marshalling; test_jwks_snapshot.py and test_oidc_jwks.py guard the JWKS rescue and key-rotation behaviour from issues #147 and #150; test_oidc_logging.py asserts that retrieval faults never surface as 401.",
       "exports": [],
-      "depends_on": ["broker"]
+      "depends_on": [
+        "broker"
+      ]
     },
     "worker": {
       "path": "worker/src/index.ts",
-      "purpose": "Cloudflare Worker implementation of the broker (TypeScript, only runtime dep jose). Endpoints: /token, /sign, /releases, /webhook. Retired as of 2026-08-20 — no longer serves any hostname; the Python/Lambda broker (broker/) is now the active implementation. Remains in the repo as code of record; its CI job still validates the TypeScript and its vitest suites still guard wire-contract behaviour from issues #147 and #150.",
-      "exports": ["default.fetch", "handleRequest", "verifyOidcToken", "parseAudience"],
+      "purpose": "Cloudflare Worker implementation of the broker (TypeScript, only runtime dep jose). Endpoints: /token, /sign, /releases, /webhook. Retired as of 2026-08-20 \u2014 no longer serves any hostname; the Python/Lambda broker (broker/) is now the active implementation. Remains in the repo as code of record; its CI job still validates the TypeScript and its vitest suites still guard wire-contract behaviour from issues #147 and #150.",
+      "exports": [
+        "default.fetch",
+        "handleRequest",
+        "verifyOidcToken",
+        "parseAudience"
+      ],
       "depends_on": []
     },
     "worker-tests": {
       "path": "worker/test/index.test.ts",
-      "purpose": "vitest suites for the broker wire contract. jwks-rotation.test.ts guards the key-rotation and snapshot behaviour that issues #147 and #150 produced. verify-oidc.test.ts directly exercises the real verifyOidcToken with a locally-generated RSA keypair — it tests issuer-pinning and audience rejection paths that the dep-injected broker tests never reach because they stub verifyOidcToken.",
+      "purpose": "vitest suites for the broker wire contract. jwks-rotation.test.ts guards the key-rotation and snapshot behaviour that issues #147 and #150 produced. verify-oidc.test.ts directly exercises the real verifyOidcToken with a locally-generated RSA keypair \u2014 it tests issuer-pinning and audience rejection paths that the dep-injected broker tests never reach because they stub verifyOidcToken.",
       "exports": [],
-      "depends_on": ["worker"]
+      "depends_on": [
+        "worker"
+      ]
     },
     "action-tests": {
       "path": "tests/bats",
       "purpose": "bats suites for every scripts/*.sh. The wire contract of the broker client is asserted here, including that the fallback fires on 5xx and never on 4xx.",
       "exports": [],
-      "depends_on": ["auth", "broker-client", "versioning", "image", "sbom-sinks", "packaging", "job-summary"]
+      "depends_on": [
+        "auth",
+        "broker-client",
+        "versioning",
+        "image",
+        "sbom-sinks",
+        "packaging",
+        "job-summary"
+      ]
     },
     "workflows": {
       "path": ".github/workflows",
@@ -102,37 +152,68 @@
       "purpose": "Published MkDocs (Material) human documentation. Distinct from .claude/*.md, which is terse agent context and is not published.",
       "exports": [],
       "depends_on": []
+    },
+    "suite-release": {
+      "path": "scripts/collect-suite-release-notes.sh, scripts/render-suite-changelog.sh",
+      "purpose": "Read app image releases selected in a central Kustomize manifest, persist CHANGELOG and environment status atomically through signed GitHub commits, attach release.json",
+      "depends_on": [
+        "auth",
+        "versioning"
+      ]
     }
   },
   "callgraph_highlights": [
     {
       "caller": "action.yml (mode: release, auth-mode: public-app)",
-      "calls": ["scripts/resolve-auth-token.sh", "scripts/request-public-app-token.sh"],
+      "calls": [
+        "scripts/resolve-auth-token.sh",
+        "scripts/request-public-app-token.sh"
+      ],
       "note": "The credential path. request-public-app-token.sh mints an OIDC token on the runner and exchanges it at the broker. It exits 1 on any non-200, so a broker fault is a red X on every consumer's release - diatreme fails hard where sibling brokers fail soft."
     },
     {
       "caller": "broker/app/broker.py:handle_token",
-      "calls": ["_verify_with_snapshot_rescue", "github.find_installation_id", "github.mint_installation_token"],
+      "calls": [
+        "_verify_with_snapshot_rescue",
+        "github.find_installation_id",
+        "github.mint_installation_token"
+      ],
       "note": "OIDC verify (with DynamoDB snapshot rescue on retrieval fault) -> repository claim match -> allowlist -> mint. Issuer pinned before verification; a JWKS retrieval fault is 503, never 401."
     },
     {
       "caller": "worker/src/index.ts:handleRequest (retired)",
-      "calls": ["verifyOidcToken", "findInstallationId", "createInstallationToken"],
-      "note": "Legacy Worker path — no longer serves any hostname. Kept for test coverage; see broker/ for the active implementation."
+      "calls": [
+        "verifyOidcToken",
+        "findInstallationId",
+        "createInstallationToken"
+      ],
+      "note": "Legacy Worker path \u2014 no longer serves any hostname. Kept for test coverage; see broker/ for the active implementation."
     },
     {
       "caller": "action.yml (mode: ci)",
-      "calls": ["scripts/check-branch-naming.sh", "scripts/resolve-image-name.sh", "scripts/scan-image.sh", "scripts/upload-sbom-dependency-track.sh"],
+      "calls": [
+        "scripts/check-branch-naming.sh",
+        "scripts/resolve-image-name.sh",
+        "scripts/scan-image.sh",
+        "scripts/upload-sbom-dependency-track.sh"
+      ],
       "note": "Build/scan path. Gates are 1:1 with the build; sinks are many:1 and failure-isolated."
     },
     {
       "caller": "action.yml (mode: release, promotion)",
-      "calls": ["scripts/verify-promote-source.sh", "scripts/build-promotion-pr-body.sh"],
+      "calls": [
+        "scripts/verify-promote-source.sh",
+        "scripts/build-promotion-pr-body.sh"
+      ],
       "note": "Provenance is verified against the release commit's tree before an image is promoted rather than rebuilt."
     },
     {
       "caller": "action.yml (mode: release, promote-from)",
-      "calls": ["scripts/resolve-promote-from.sh", "scripts/verify-promote-from-images.sh", "scripts/push-release-tag.sh"],
+      "calls": [
+        "scripts/resolve-promote-from.sh",
+        "scripts/verify-promote-from-images.sh",
+        "scripts/push-release-tag.sh"
+      ],
       "note": "Promotes a named prerelease to stable. Every refusal (unknown tag, wrong channel, stable tag that is not this promotion's, a container package build, mismatched npm provenance, missing source image) happens before anything is written. The stable tag's message records its source (Promoted-From: <tag>); push-release-tag.sh runs with RESUME_AT_HEAD and that line as RESUME_MARKER, so the tag this promotion wrote resumes it and any other existing stable tag is refused."
     }
   ],
