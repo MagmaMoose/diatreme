@@ -1056,6 +1056,16 @@ inputs:
     required: false
     default: '@last'
 
+  suite-manifest:
+    description: 'Version-only suite release: Kustomize manifest containing the centrally selected images/newTag values. Requires suite-catalog; app repositories are read-only.'
+    required: false
+    default: ''
+
+  suite-catalog:
+    description: 'Version-only suite release: JSON catalog with apps [{id, display_name, repository, image}]. Aggregates every changed app release into CHANGELOG.md and release.json.'
+    required: false
+    default: ''
+
   # ── Common release options ────────────────────────────────────────────────
   working-directory:
     description: |
@@ -1542,6 +1552,23 @@ runs:
         fetch-tags: true
         token: ${{ steps.auth.outputs.token }}
         submodules: ${{ inputs.submodules }}
+
+    - name: Validate suite release inputs
+      if: inputs.mode == 'release' && (inputs.suite-manifest != '' || inputs.suite-catalog != '')
+      shell: bash
+      env:
+        ACTION_MODE: ${{ inputs.mode }}
+        MANIFEST: ${{ inputs.suite-manifest }}
+        CATALOG: ${{ inputs.suite-catalog }}
+        VERSION: ${{ inputs.version-override }}
+        IMAGE: ${{ inputs.image_name }}
+        DETECT_IMAGE: ${{ inputs.detect-image-name }}
+      run: |
+        set -euo pipefail
+        if [ "$ACTION_MODE" != release ] || [ -z "$MANIFEST" ] || [ -z "$CATALOG" ] || [ -z "$VERSION" ] || [ -n "$IMAGE" ] || [ "$DETECT_IMAGE" != false ]; then
+          echo "::error::Suite releases require mode release, suite-manifest, suite-catalog, an explicit version-override and no image build."
+          exit 1
+        fi
 
     # ── 2b. Promote an existing prerelease (release mode, opt-in) ────────────
     # `promote-from` names a prerelease tag and releases that exact build as
@@ -2671,6 +2698,51 @@ runs:
     # HEAD is the commit being tagged in all three. On a promotion that is the
     # prerelease's own commit, because `Checkout promote source` moved the
     # workspace there.
+    - name: Set up Python for suite release notes
+      id: suite-python
+      if: inputs.mode == 'release' && inputs.suite-manifest != ''
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.13'
+        update-environment: false
+
+    - name: Install suite release dependencies
+      if: inputs.mode == 'release' && inputs.suite-manifest != ''
+      shell: bash
+      env:
+        PYTHON_BIN: ${{ steps.suite-python.outputs.python-path }}
+      run: '"${PYTHON_BIN}" -m pip install --disable-pip-version-check -r "${GITHUB_ACTION_PATH}/scripts/suite-requirements.txt"'
+
+    - name: Collect suite application release notes
+      id: suite-notes
+      if: inputs.mode == 'release' && inputs.suite-manifest != '' && steps.release-version.outputs.version != ''
+      shell: bash
+      env:
+        PYTHON_BIN: ${{ steps.suite-python.outputs.python-path }}
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        SUITE_MANIFEST: ${{ inputs.suite-manifest }}
+        SUITE_CATALOG: ${{ inputs.suite-catalog }}
+        CURRENT_ENV: ${{ steps.detect-env.outputs.environment }}
+        VERSION: ${{ steps.release-version.outputs.version }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        OUTPUT_DIR: ${{ runner.temp }}/diatreme-suite-release
+      run: bash "${GITHUB_ACTION_PATH}/scripts/collect-suite-release-notes.sh"
+
+    - name: Persist suite changelog and release summary
+      id: suite-changelog
+      if: inputs.mode == 'release' && inputs.suite-manifest != '' && steps.release-version.outputs.version != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        CURRENT_BRANCH: ${{ github.ref_name }}
+        CURRENT_ENV: ${{ steps.detect-env.outputs.environment }}
+        PYTHON_BIN: ${{ steps.suite-python.outputs.python-path }}
+        SUITE_MANIFEST: ${{ inputs.suite-manifest }}
+        VERSION: ${{ steps.release-version.outputs.version }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        OUTPUT_DIR: ${{ runner.temp }}/diatreme-suite-release
+      run: bash "${GITHUB_ACTION_PATH}/scripts/render-suite-changelog.sh"
+
     - name: Create version-override release tag
       id: version-override-tag
       if: inputs.mode == 'release' && steps.release-version.outputs.version != ''
@@ -2679,7 +2751,7 @@ runs:
         GITHUB_TOKEN: ${{ steps.auth.outputs.token }}
         OVERRIDE_VERSION: ${{ steps.release-version.outputs.version }}
         OVERRIDE_TAG: ${{ steps.release-version.outputs.tag }}
-        OVERRIDE_RESUME: ${{ steps.release-version.outputs.resume }}
+        OVERRIDE_RESUME: ${{ inputs.suite-manifest != '' && 'true' || steps.release-version.outputs.resume }}
         PROMOTE_MARKER: ${{ steps.promote-source.outputs.marker }}
       run: |
         set -euo pipefail
@@ -3590,6 +3662,9 @@ runs:
         GH_TOKEN: ${{ steps.auth.outputs.token }}
         NORMALIZE_TAG: ${{ steps.normalize.outputs.tag }}
         NORMALIZE_RELEASE_NOTES: ${{ steps.normalize.outputs.release_notes }}
+        GH_ENTERPRISE_TOKEN: ${{ steps.auth.outputs.token }}
+        SUITE_NOTES_FILE: ${{ steps.suite-changelog.outputs.notes-file }}
+        SUITE_ASSET_FILE: ${{ steps.suite-changelog.outputs.asset-file }}
         DETECT_IS_PRERELEASE: ${{ steps.detect-env.outputs.is_prerelease }}
         PROMOTE_PREVIOUS_TAG: ${{ steps.promote-source.outputs.previous_tag }}
         PROMOTE_TAG_LATEST: ${{ steps.promote-source.outputs.tag_latest }}
@@ -3627,6 +3702,11 @@ runs:
         if [ -n "${NOTES}" ]; then
           NOTES_FLAGS=(--notes "${NOTES}")
         fi
+        if [ -n "${SUITE_NOTES_FILE:-}" ]; then
+          NOTES_FLAGS=(--notes-file "${SUITE_NOTES_FILE}")
+        fi
+        ASSETS=()
+        if [ -n "${SUITE_ASSET_FILE:-}" ]; then ASSETS+=("${SUITE_ASSET_FILE}"); fi
         # The rule the `:latest` image tag follows, applied to GitHub's own
         # "Latest" marker: a fix promoted on an older release line is not the
         # latest release. Every other run leaves the marker to GitHub. A plain
@@ -3644,7 +3724,7 @@ runs:
         # never fire.
         MAX_ATTEMPTS=5
         for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
-          if gh release create "${TAG}" \
+          if gh release create "${TAG}" ${ASSETS[@]+"${ASSETS[@]}"} \
                --title "${TAG}" \
                "${NOTES_FLAGS[@]}" \
                ${PRE_FLAG} ${LATEST_FLAG} 2>/tmp/release_create.err; then

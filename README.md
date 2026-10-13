@@ -118,3 +118,9 @@ Pin `@v2` for the floating major, or a tag or SHA to freeze.
 
 [Report a vulnerability](SECURITY.md) · [Contributing](CONTRIBUTING.md) ·
 MIT, see [LICENSE](LICENSE).
+
+### Suite release notes
+
+For a version-only repository, set `suite-manifest`, `suite-catalog` and `version-override`. The manifest holds Kustomize `images/newTag` selections; the catalog maps each image to an application repository. Diatreme reads published application release notes, collects every intervening release on the selected channel, and writes `CHANGELOG.md` plus `suite/status.json` in one GitHub-signed commit. It attaches `release.json` to the suite GitHub Release.
+
+Use a token with read access to the application repositories and contents write access to the suite repository. Suite mode does not build application images. Missing published releases or empty release notes fail before tagging. A rerun resumes a tag on the same commit; a changed selection or historical status fails instead of overwriting newer release data.
