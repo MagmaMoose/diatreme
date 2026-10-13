@@ -120,9 +120,9 @@ environment = os.environ['CURRENT_ENV']
 prefix = os.environ.get('TAG_PREFIX', 'v')
 version = os.environ.get('VERSION', '')
 server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com').rstrip('/')
-host = urlparse(os.environ.get('GITHUB_API_URL', server)).hostname
+host = urlparse(server).hostname
 if not host:
-    fail("GITHUB_API_URL must contain a hostname")
+    fail("GITHUB_SERVER_URL must contain a hostname")
 if host == 'api.github.com':
     host = 'github.com'
 

@@ -38,6 +38,7 @@ PY
   cat > "$TEST_ROOT/bin/gh" <<'PY'
 #!/usr/bin/env python3
 import base64,json,os,sys
+assert sys.argv[1:4]==['api','--hostname',os.environ['GITHUB_SERVER_URL'].split('://',1)[1]]
 p=json.load(sys.stdin)
 with open(os.environ['REQUEST_LOG'],'a') as f: f.write(json.dumps(p)+'\n')
 state_path=os.environ['REMOTE_STATE']
@@ -75,6 +76,15 @@ PY
 
 render() {
   run bash "$SCRIPT"
+}
+
+@test "signed changelog calls use the web host on a data residency tenant" {
+  export GITHUB_SERVER_URL=https://tenant.ghe.com
+  export GITHUB_API_URL=https://api.tenant.ghe.com
+  render
+  [ "$status" -eq 0 ]
+  run python3 -c 'import json,os; assert json.load(open(os.environ["REMOTE_STATE"]))["commits"] == 1'
+  [ "$status" -eq 0 ]
 }
 
 @test "one signed GraphQL commit preserves other environment status and prior changelog" {
