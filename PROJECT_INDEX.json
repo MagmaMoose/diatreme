@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-13T00:00:00Z",
+  "generated": "2026-10-14T00:00:00Z",
   "summary": "Diatreme is a release/deployment orchestrator published to the GitHub Marketplace as a composite action, plus a hosted GitHub-App backend that brokers OIDC tokens for it. The action runs on the runner (bash, bats-tested); the broker runs as a service and is called over HTTP. Neither imports the other. Consumers pin the action by SHA, so input names, defaults and broker wire responses are frozen API surface.",
   "entrypoints": [
     "action.yml:runs.steps",
@@ -49,7 +49,7 @@
     },
     "versioning": {
       "path": "scripts/detect-versioning-tool.sh",
-      "purpose": "Two-tier autodetect of the versioning backend (semantic-release, python-semantic-release, GitVersion, release-please), then delegates. versioning-tool: auto is the default. inject-version-files.sh persists the released version back into the tracked manifest(s) named by version-file - several paths and globs, all updated in ONE commit - and warns rather than fails, since the tag and Release are already published when it runs. resolve-release-line-version.sh is release-branch-versioning: branch: a run on release/X.Y.Z is versioned from the branch name in any environment (X.Y.Z until it ships, then the next free patch, -<id>.N candidates), with no versioning tool.",
+      "purpose": "Two-tier autodetect of the versioning backend (semantic-release, python-semantic-release, GitVersion, release-please), then delegates. versioning-tool: auto is the default. inject-version-files.sh persists the released version back into the tracked manifest(s) named by version-file - several paths and globs, all updated in ONE commit - and warns rather than fails, since the tag and Release are already published when it runs. resolve-release-line-version.sh is release-branch-versioning: branch: a run on release/X.Y.Z is versioned from the branch name in any environment (X.Y.Z until it ships, then the next free patch, -<id>.N candidates), with no versioning tool. detect-release-branch-version.sh is the GitFlow merge-subject path: it reads the release branch name from HEAD's merge commit subject and derives the version from it, so a squash-merged release PR still ships the correct version instead of whatever the backend's default increment would have produced; skipped on prerelease environments.",
       "exports": [
         "tool",
         "version",
