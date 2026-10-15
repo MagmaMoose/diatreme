@@ -13,8 +13,8 @@ release then authenticates with. Starts with `ghs_`.
 an OIDC token at the broker. `github-token` uses a token you supply.
 `private-app` mints from your own App's ID and key.
 
-**Broker.** The hosted GitHub App backend the action calls. Serves `/token`,
-`/sign`, `/releases` and `/webhook`. Also called the token broker.
+**Broker.** The hosted GitHub App backend the action calls to exchange an OIDC
+token for an App installation token. Also called the token broker.
 
 **Broker surface.** Diatreme's other half: the code behind the broker. The
 production deployment is the Python/Lambda broker in `broker/` running on AWS

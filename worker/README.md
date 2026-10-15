@@ -1,9 +1,13 @@
-# Diatreme Worker
+# Diatreme Worker (retired)
 
-The Cloudflare Worker behind the hosted Diatreme broker at
-`https://api.diatreme.magmamoose.com`. It is the **GitHub App backend** for the
+**This Cloudflare Worker is no longer serving production traffic.** The hosted
+Diatreme broker at `https://api.diatreme.magmamoose.com` is now a Python/Lambda
+implementation (`broker/app/`). The Worker remains in this repository as the
+code-of-record reference and rollback target, but serves as neither.
+
+The Worker was the original **GitHub App backend** for the
 [Diatreme composite action](../README.md)'s release flows, so callers don't have
-to register and run their own GitHub App. Its whole job is release/deployment
+to register and run their own GitHub App. Its whole job was release/deployment
 orchestration:
 
 - **Token broker**: exchange a GitHub Actions OIDC token for a short-lived App
