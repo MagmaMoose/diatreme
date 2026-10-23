@@ -60,7 +60,10 @@ input_default() {
     echo "removal runs after a failure: ${cond}"; false
   fi
   # A step that swallows its own failure would let the removal run after it.
-  if grep -q 'continue-on-error' "${ACTION_YML}"; then echo "a step continues on error"; false; fi
+  if sed -n "$(step_line 'Add building label'),$(step_line 'Remove building label')p" "${ACTION_YML}" \
+     | grep -q 'continue-on-error'; then
+    echo "a ci step continues on error"; false
+  fi
 }
 
 @test "the label steps run on a pull request with the input set, with the resolved token" {
