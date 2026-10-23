@@ -1967,7 +1967,6 @@ runs:
         INPUT_PLATFORMS: ${{ inputs.platforms }}
         INPUT_BAKE_FILE: ${{ steps.resolve-image.outputs.bake_file }}
         INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
-        BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
       run: |
         set -euo pipefail
 
