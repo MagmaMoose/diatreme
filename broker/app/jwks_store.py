@@ -94,8 +94,11 @@ def save(table: str, issuer: str, jwks: dict[str, Any]) -> None:
     if not isinstance(keys, list) or not keys:
         return
 
-    now = time.monotonic()
-    if now - _last_write.get(issuer, 0.0) < WRITE_MIN_INTERVAL_S:
+    # No entry means never written. Defaulting the last write to 0.0 instead skipped every
+    # write while time.monotonic() (seconds since the host booted) was under the interval,
+    # which is the whole first five minutes of a fresh Lambda environment or runner.
+    last = _last_write.get(issuer)
+    if last is not None and time.monotonic() - last < WRITE_MIN_INTERVAL_S:
         return
 
     try:

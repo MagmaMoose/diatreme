@@ -170,7 +170,10 @@ def _cooling_down(issuer: str) -> bool:
 
 def _may_force_reload(issuer: str) -> bool:
     now = time.monotonic()
-    if now - _last_forced_reload.get(issuer, 0.0) < FORCED_RELOAD_MIN_INTERVAL_S:
+    # No entry means never reloaded; 0.0 would refuse while the host is younger than the
+    # interval (see jwks_store.save).
+    last = _last_forced_reload.get(issuer)
+    if last is not None and now - last < FORCED_RELOAD_MIN_INTERVAL_S:
         return False
     _last_forced_reload[issuer] = now
     return True
