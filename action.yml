@@ -913,6 +913,45 @@ inputs:
     required: false
     default: ''
 
+  # ── Preview environments (mode: ci, pull requests, opt-in) ───────────────
+  image-commit-tag:
+    description: |
+      Also push a pull request's ci image as `pr-<N>-<sha7>`, where sha7 is the
+      first 7 characters of the pull request's head commit (mode: ci,
+      pull_request events). `pr-<N>` is overwritten on every push, so a deploy
+      pinned to it never rolls; a preview controller that renders one deploy
+      per head commit (Flux Operator's `GitHubPullRequest` provider, Argo CD's
+      pull request generator) uses this tag instead. It is the head commit,
+      not `github.sha`: that is the merge commit actions/checkout builds, which
+      those controllers do not know.
+
+      The tag goes out in the same push as `pr-<N>`, so both name one
+      manifest. A pull request whose build is skipped (see `deploy-paths`)
+      gets it by retagging its existing `pr-<N>`, and a warning when there is
+      none yet. The tag is the `image-commit-tag` output. Other events and
+      `mode: release` are unchanged.
+    required: false
+    default: 'false'
+
+  image-building-label:
+    description: |
+      A label that is on a pull request while mode: ci builds its images.
+      Empty (the default) turns this off. Added before the build and removed
+      only once every tag (with `image-commit-tag`, the commit tag too) is
+      pushed; a run that fails or is cancelled leaves it on. A preview
+      controller that holds a pull request while it carries the label (Flux
+      Operator's ResourceSetInputProvider `spec.skip.labels`) keeps the preview
+      on the last commit that has an image.
+
+      Label changes never fail the run, they warn. They use the token
+      Diatreme already resolves, which needs `pull-requests: write`. Keep
+      `labeled` and `unlabeled` out of the workflow's pull_request types: a
+      label changed with an App token starts workflows, so each change would
+      start another build. A run that this label started does not add it
+      again, so it cannot loop.
+    required: false
+    default: ''
+
   # ── Integrations: GitHub Projects ─────────────────────────────────────────
   aggregate-github-projects:
     description: |
@@ -1460,6 +1499,9 @@ outputs:
   image-tag:
     description: 'The tag mode: ci pushed its image under: pr-<N> on a pull request, <branch>-<sha7>-<commit time> on any other event, or version-override when set. Empty when no image was built.'
     value: ${{ steps.build-pr-image.outputs.image-tag }}
+  image-commit-tag:
+    description: 'The per-commit tag a pull request''s ci image also got with image-commit-tag: pr-<N>-<first 7 characters of the head commit>. Empty on other events, with the input off, or when no image could be tagged.'
+    value: ${{ steps.build-pr-image.outputs.image-commit-tag || steps.retag-commit.outputs.image-commit-tag }}
   images-promoted:
     description: 'Number of release image(s) retagged rather than rebuilt: from a provenance-verified pr-<N> image, from the previous environment''s prerelease, or from the prerelease named by promote-from.'
     value: ${{ steps.promote-images.outputs.promoted_count }}
@@ -1667,6 +1709,23 @@ runs:
     # CI MODE — build and push the CI image (pr-<N>, or <branch>-<sha7>-<time>)
     # ═════════════════════════════════════════════════════════════════════════
 
+    # image-building-label stays on the pull request until "Remove building
+    # label", the last ci step, so a preview controller that skips labelled pull
+    # requests holds the preview on a commit that has an image. A failed or
+    # cancelled run never reaches the removal, which is the point.
+    - name: Add building label
+      if: inputs.mode == 'ci' && inputs.image-building-label != '' && github.event_name == 'pull_request' && steps.resolve-image.outputs.image_name != ''
+      shell: bash
+      env:
+        ACTION: add
+        LABEL: ${{ inputs.image-building-label }}
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        REPO_FULL: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENT_ACTION: ${{ github.event.action }}
+        EVENT_LABEL: ${{ github.event.label.name }}
+      run: "${GITHUB_ACTION_PATH}/scripts/pr-building-label.sh"
+
     # A deploy PR moves tags in the deploy-paths and nothing else, so there is
     # no image to build for it. The image steps below skip on `deploy_only`, and
     # the job still reports its check, which a required-status rule waits for.
@@ -1743,8 +1802,9 @@ runs:
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only != 'true'
       uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
+    # Buildx and the login also serve a skipped build's commit-tag retag.
     - name: Set up Docker Buildx (CI)
-      if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only != 'true'
+      if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && (steps.deploy-only.outputs.deploy_only != 'true' || inputs.image-commit-tag == 'true')
       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       with:
         # Self-hosted docker-in-docker runners (e.g. a k3s cluster) have a reduced
@@ -1758,7 +1818,7 @@ runs:
         buildkitd-flags: --oci-worker-net=host
 
     - name: Log in to container registry (CI)
-      if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only != 'true'
+      if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && (steps.deploy-only.outputs.deploy_only != 'true' || inputs.image-commit-tag == 'true')
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
       with:
         registry: ${{ inputs.registry }}
@@ -1770,6 +1830,8 @@ runs:
     # version-override, else pr-<N> on a pull request, else
     # <branch>-<sha7>-<commit time>. Before that script a push had no number to
     # put after `pr-` and pushed `<image>:pr-` for every branch.
+    # With image-commit-tag a pull request build also pushes pr-<N>-<sha7> in
+    # the same push, so both tags always name this build's manifest.
     - name: Build and push CI image
       id: build-pr-image
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only != 'true'
@@ -1777,6 +1839,10 @@ runs:
       env:
         VERSION_OVERRIDE: ${{ steps.version-override.outputs.version }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        # The pull request's head, never github.sha: that is the merge commit
+        # actions/checkout builds, which no preview controller knows.
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        IMAGE_COMMIT_TAG: ${{ inputs.image-commit-tag }}
         REGISTRY: ${{ inputs.registry }}
         INPUT_PLATFORMS: ${{ inputs.platforms }}
         BAKE_GITHUB_TOKEN: ${{ inputs.build-github-token }}
@@ -1799,8 +1865,16 @@ runs:
         export VERSION
         echo "image-tag=${VERSION}" >> "$GITHUB_OUTPUT"
 
+        COMMIT_TAG=""
+        if [ "${IMAGE_COMMIT_TAG}" = "true" ] && [ -n "${PR_NUMBER}" ]; then
+          COMMIT_TAG=$(KIND=commit PR_NUMBER="${PR_NUMBER}" HEAD_SHA="${HEAD_SHA}" \
+            "${GITHUB_ACTION_PATH}/scripts/ci-image-tag.sh")
+          echo "image-commit-tag=${COMMIT_TAG}" >> "$GITHUB_OUTPUT"
+        fi
+
         echo "IMAGE_NAME: ${IMAGE_NAME}"
         echo "VERSION:    ${VERSION}"
+        [ -z "${COMMIT_TAG}" ] || echo "COMMIT_TAG: ${COMMIT_TAG}"
 
         # Stamp build provenance so `mode: release` can prove a pr-<N> image was
         # built from the code it is about to release before promoting it
@@ -1815,6 +1889,7 @@ runs:
           # github_token secret, --push.
           export BUILD_GITHUB_TOKEN="${BAKE_GITHUB_TOKEN}"
           export TAGS="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          [ -z "${COMMIT_TAG}" ] || TAGS="${TAGS}"$'\n'"${REGISTRY}/${IMAGE_NAME}:${COMMIT_TAG}"
           export DOCKERFILE="${INPUT_DOCKERFILE}"
           export PLATFORMS="${INPUT_PLATFORMS}"
           export CACHE_SCOPE="bk-dockerfile-${REF_NAME}"
@@ -1836,9 +1911,10 @@ runs:
         # yields [""], an invalid platform. Unset is what defers to the default.
         if [ -n "${INPUT_PLATFORMS}" ]; then export PLATFORMS="${INPUT_PLATFORMS}"; fi
 
-        TARGETS=$(docker buildx bake \
+        BAKE_PRINT=$(docker buildx bake \
           -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" \
-          --print 2>/dev/null | jq -r '.target | keys[]')
+          --print 2>/dev/null)
+        TARGETS=$(jq -r '.target | keys[]' <<< "${BAKE_PRINT}")
 
         CACHE_ARGS=()
         for TARGET in ${TARGETS}; do
@@ -1847,15 +1923,73 @@ runs:
           CACHE_ARGS+=(--set "${TARGET}.cache-to=type=gha,mode=max,scope=${SCOPE}")
         done
 
+        # The commit tag joins each tagged target's own tags, on the repository
+        # of its first. A `--set` on tags replaces the bake file's list, so the
+        # list is restated (`+=` would need buildx 0.22).
+        TAG_ARGS=()
+        if [ -n "${COMMIT_TAG}" ]; then
+          while IFS= read -r TAG_SET; do
+            TAG_ARGS+=(--set "${TAG_SET}")
+          done < <(jq -r --arg tag "${COMMIT_TAG}" '
+            .target | to_entries[] | select((.value.tags // []) | length > 0)
+            | .key as $t | .value.tags as $tags
+            | ($tags[], ($tags[0] | sub("@.*$"; "") | sub(":[^:/]*$"; "")) + ":" + $tag)
+            | "\($t).tags=\(.)"' <<< "${BAKE_PRINT}")
+        fi
+
         # `--set` overrides only these two provenance keys in the consumer's
-        # bake file.
+        # bake file, and the tags when there is a commit tag.
         docker buildx bake \
           -f "${INPUT_BAKE_FILE}" \
           "${INPUT_BAKE_TARGET}" \
           "${CACHE_ARGS[@]}" \
+          ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} \
           --set "*.labels.org.opencontainers.image.revision=${BUILD_REVISION}" \
           --set "*.labels.com.magmamoose.diatreme.git-tree=${BUILD_TREE}" \
           --push
+
+    # A pull request whose build was skipped (deploy-paths) still gets a commit
+    # tag for its new head, retagged from the image its last build pushed, so a
+    # preview of that head has an image to run.
+    - name: Tag skipped build for the pull request head
+      id: retag-commit
+      if: inputs.mode == 'ci' && inputs.image-commit-tag == 'true' && steps.resolve-image.outputs.image_name != '' && steps.deploy-only.outputs.deploy_only == 'true'
+      shell: bash
+      env:
+        VERSION_OVERRIDE: ${{ steps.version-override.outputs.version }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        REF_NAME: ${{ github.ref_name }}
+        OWNER: ${{ github.repository_owner }}
+        INPUT_IMAGE_NAME: ${{ steps.resolve-image.outputs.image_name }}
+        STRATEGY: ${{ steps.resolve-image.outputs.strategy }}
+        REGISTRY: ${{ inputs.registry }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+        INPUT_BAKE_FILE: ${{ steps.resolve-image.outputs.bake_file }}
+        INPUT_BAKE_TARGET: ${{ inputs.bake_target }}
+      run: |
+        set -euo pipefail
+
+        OWNER_LOWER=$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')
+        export IMAGE_NAME="${OWNER_LOWER}/${INPUT_IMAGE_NAME}"
+        # What a build of this pull request pushes (pr-<N>), and its commit tag.
+        VERSION=$(VERSION_OVERRIDE="${VERSION_OVERRIDE}" PR_NUMBER="${PR_NUMBER}" REF_NAME="${REF_NAME}" \
+          "${GITHUB_ACTION_PATH}/scripts/ci-image-tag.sh")
+        export VERSION
+        COMMIT_TAG=$(KIND=commit PR_NUMBER="${PR_NUMBER}" HEAD_SHA="${HEAD_SHA}" \
+          "${GITHUB_ACTION_PATH}/scripts/ci-image-tag.sh")
+        if [ -n "${INPUT_PLATFORMS}" ]; then export PLATFORMS="${INPUT_PLATFORMS}"; fi
+
+        # The refs that build pushed, derived as the scan derives them.
+        if [ "${STRATEGY}" = "dockerfile" ]; then
+          SOURCE_REFS="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+        else
+          SOURCE_REFS=$(docker buildx bake -f "${INPUT_BAKE_FILE}" "${INPUT_BAKE_TARGET}" --print 2>/dev/null \
+            | jq -r '.target[].tags[0] // empty' | sort -u)
+        fi
+
+        SOURCE_REFS="${SOURCE_REFS}" COMMIT_TAG="${COMMIT_TAG}" \
+          "${GITHUB_ACTION_PATH}/scripts/retag-commit-image.sh"
 
     # ─────────────────────────────────────────────────────────────────────────
     # CI MODE — scan the assembled image, emit SBOM + findings
@@ -1921,6 +2055,19 @@ runs:
         echo "${IMAGE_REFS}"
 
         IMAGE_REFS="${IMAGE_REFS}" "${GITHUB_ACTION_PATH}/scripts/scan-image.sh"
+
+    # The last ci step, after every push. No status function in `if:`: a failed
+    # or cancelled run must leave the label on.
+    - name: Remove building label
+      if: inputs.mode == 'ci' && inputs.image-building-label != '' && github.event_name == 'pull_request' && steps.resolve-image.outputs.image_name != ''
+      shell: bash
+      env:
+        ACTION: remove
+        LABEL: ${{ inputs.image-building-label }}
+        GH_TOKEN: ${{ steps.auth.outputs.token }}
+        REPO_FULL: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: "${GITHUB_ACTION_PATH}/scripts/pr-building-label.sh"
 
     # ═════════════════════════════════════════════════════════════════════════
     # RELEASE MODE — versioning

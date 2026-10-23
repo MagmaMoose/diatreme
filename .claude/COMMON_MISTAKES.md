@@ -124,3 +124,14 @@ Broker internals, infrastructure, DNS and TLS: `.claude/INFRA_NOTES.md`.
   With resume on, a re-run in the `acc` environment would "finish" v1.4.0 by retagging the
   `pr-<N>` image over the promoted one. Candidates (`-rc.N`) at HEAD are resumed; stable tags
   never are. `tests/bats/release-branch-flow.bats` holds both.
+
+- **The commit tag is the PR head, never `github.sha` or HEAD.** On `pull_request` both are
+  the merge commit `actions/checkout` builds, a SHA no preview controller knows: Flux
+  Operator's `GitHubPullRequest` provider and Argo CD's generator export the head.
+  `scripts/ci-image-tag.sh` (`KIND=commit`) takes `HEAD_SHA`, and `tests/bats/ci-image-build.bats`
+  fails if either ci tag step reads `github.sha`. The tag goes out in the same push as
+  `pr-<N>`: a retag after the push races a newer run moving `pr-<N>`.
+- **`Remove building label` must stay the last ci step with no status function in `if:`.**
+  An `always()` there, or any earlier ci step with `continue-on-error`, takes the label off a
+  run that failed, and the preview moves to a commit with no image.
+  `tests/bats/pr-preview-action.bats` holds both.

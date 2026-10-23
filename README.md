@@ -91,7 +91,7 @@ flowchart LR
 | `publish-package` | — | Language package to publish: `npm` · `nuget` · `maven` · `pip` · … |
 | `tag-prefix` | — | Scopes the release when one repo ships several packages. |
 
-All 108 inputs and every output →
+All 110 inputs and every output →
 **[Action reference](https://docs.magmamoose.com/diatreme/reference/action/)**
 
 ## Documentation

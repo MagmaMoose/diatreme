@@ -32,9 +32,14 @@ input_default() {
 }
 
 @test "every ci image step skips a deploy-only pull request" {
-  for s in "Set up QEMU" "Set up Docker Buildx (CI)" "Log in to container registry (CI)" \
-           "Build and push CI image" "Install Trivy" "Scan image and report"; do
+  for s in "Set up QEMU" "Build and push CI image" "Install Trivy" "Scan image and report"; do
     step_head "${s}" | grep -qF "steps.deploy-only.outputs.deploy_only != 'true'" \
+      || { echo "not gated: ${s}"; false; }
+    if step_head "${s}" | grep -E '^      if: ' | grep -qF "image-commit-tag"; then echo "runs for the retag: ${s}"; false; fi
+  done
+  # Buildx and the login skip it too, unless image-commit-tag retags its pr-<N>.
+  for s in "Set up Docker Buildx (CI)" "Log in to container registry (CI)"; do
+    step_head "${s}" | grep -qF "(steps.deploy-only.outputs.deploy_only != 'true' || inputs.image-commit-tag == 'true')" \
       || { echo "not gated: ${s}"; false; }
   done
   [ "$(step_line 'Detect deploy-only change')" -lt "$(step_line 'Set up QEMU')" ]

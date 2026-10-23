@@ -27,11 +27,20 @@
 # with a letter, digit or `_`), and cut so the whole tag fits Docker's 128
 # characters.
 #
+# KIND=commit asks for the second tag a pull request build gets with
+# `image-commit-tag`: pr-<N>-<sha7>, one per head commit, for preview
+# controllers that render one deploy per commit (pr-<N> moves on every push,
+# so a deploy pinned to it never rolls). sha7 comes from HEAD_SHA, the pull
+# request's head, never from HEAD: on a pull request actions/checkout builds
+# the merge commit, a SHA no preview controller knows.
+#
 # Env:
 #   VERSION_OVERRIDE  the validated version-override, without `v` (empty when
 #                     unset).
 #   PR_NUMBER         github.event.pull_request.number (empty outside a PR).
 #   REF_NAME          github.ref_name.
+#   KIND              `build` (default): the tag above. `commit`: pr-<N>-<sha7>.
+#   HEAD_SHA          github.event.pull_request.head.sha (KIND=commit only).
 # Reads HEAD for the commit and its committer time.
 #
 # Output: the tag, on stdout.
@@ -41,6 +50,16 @@ set -euo pipefail
 VERSION_OVERRIDE="${VERSION_OVERRIDE:-}"
 PR_NUMBER="${PR_NUMBER:-}"
 REF_NAME="${REF_NAME:-}"
+
+if [ "${KIND:-build}" = "commit" ]; then
+  HEAD_SHA="${HEAD_SHA:-}"
+  if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ && "${HEAD_SHA}" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    echo "::error::A commit tag needs the pull request number and head commit SHA, got '${PR_NUMBER}' and '${HEAD_SHA}'." >&2
+    exit 1
+  fi
+  printf 'pr-%s-%s\n' "${PR_NUMBER}" "${HEAD_SHA:0:7}"
+  exit 0
+fi
 
 if [ -n "${VERSION_OVERRIDE}" ]; then
   printf '%s\n' "${VERSION_OVERRIDE}"

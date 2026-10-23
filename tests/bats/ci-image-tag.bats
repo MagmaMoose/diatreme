@@ -113,3 +113,39 @@ tag() {
   tag test
   [ "$output" = "${one}" ]
 }
+
+# KIND=commit: the per-commit tag a pull request build also gets with
+# image-commit-tag. HEAD here stands in for the merge commit actions/checkout
+# builds on a pull request; the tag must come from the pull request's head.
+
+commit_tag() {
+  run env KIND=commit VERSION_OVERRIDE="${OVERRIDE:-}" PR_NUMBER="${PR:-}" HEAD_SHA="${HEAD:-}" "${SCRIPT}"
+}
+
+@test "the commit tag is the pull request head's sha7, not the merge commit's" {
+  PR=42 HEAD=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d commit_tag
+  [ "$status" -eq 0 ]
+  [ "$output" = "pr-42-1a2b3c4" ]
+  [[ "$output" != *"${SHA7}"* ]]
+}
+
+@test "version-override does not rename the commit tag" {
+  OVERRIDE=3.20.0 PR=42 HEAD=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d commit_tag
+  [ "$output" = "pr-42-1a2b3c4" ]
+}
+
+@test "a SHA-256 head commit still gives seven characters" {
+  PR=7 HEAD="$(printf 'ab%.0s' $(seq 1 32))" commit_tag
+  [ "$status" -eq 0 ]
+  [ "$output" = "pr-7-abababa" ]
+}
+
+@test "no head commit or no number is an error, never a pr-<N>- tag" {
+  PR=42 HEAD= commit_tag
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::"* ]]
+  PR= HEAD=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d commit_tag
+  [ "$status" -eq 1 ]
+  PR=42 HEAD=HEAD commit_tag
+  [ "$status" -eq 1 ]
+}

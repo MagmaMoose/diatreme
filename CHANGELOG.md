@@ -11,6 +11,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Preview environments for pull requests (`image-commit-tag`, `image-building-label`).**
+  `pr-<N>` is overwritten on every push, so a preview controller that renders one deploy per
+  head commit (Flux Operator's `GitHubPullRequest` provider, Argo CD's pull request generator)
+  had no tag that rolls. With `image-commit-tag`, `mode: ci` also pushes a pull request's image
+  as `pr-<N>-<sha7>` of the pull request's head commit (never the merge commit the checkout
+  builds), in the same push as `pr-<N>`; a pull request whose build is skipped by
+  `deploy-paths` gets it by retagging its `pr-<N>`, and a warning when there is none. New
+  output: `image-commit-tag`. `image-building-label` names a label that is on the pull request
+  from before the build until every tag is pushed, and stays on when the run fails or is
+  cancelled, so a provider that skips labelled pull requests (`spec.skip.labels`) keeps the
+  preview on a commit that has an image. Label changes only warn, and a run started by the
+  label's own event does not add it again, so it cannot loop. Both are off by default;
+  `mode: release` still promotes `pr-<N>`.
+
 - **`deploy-paths`.** The directories deploy PRs write (the kustomize overlays Tremvok's
   `gitops-pr` moves image tags in). `mode: ci` skips the image build and scan for a pull
   request that changes nothing outside them and still reports its check; `mode: release`
