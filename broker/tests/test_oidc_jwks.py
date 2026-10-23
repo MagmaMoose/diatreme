@@ -52,6 +52,20 @@ async def test_throttles_the_forced_reload(signer, jwks):
     assert jwks.calls == 2  # nosec B101
 
 
+async def test_a_young_host_still_gets_its_first_forced_reload(signer, jwks, monkeypatch):
+    """The throttle counts from the last reload, not from the host's boot: a rotation seen
+    in the first seconds of a fresh environment is still recovered."""
+    monkeypatch.setattr(oidc.time, "monotonic", lambda: 1.0)
+    await oidc.verify_token(signer.mint(), AUDIENCE, [GITHUB_ISSUER])
+
+    rotated = Signer("kid-b")
+    jwks.serve([rotated.jwk])
+    claims = await oidc.verify_token(rotated.mint(), AUDIENCE, [GITHUB_ISSUER])
+
+    assert claims["repository"] == "octo-org/octo-repo"  # nosec B101
+    assert jwks.calls == 2  # nosec B101
+
+
 async def test_non_200_carries_the_upstream_status(signer, jwks):
     jwks.status = 525  # the actual #147 failure: Cloudflare could not reach GitHub
 

@@ -68,6 +68,19 @@ async def test_successful_verification_snapshots_the_key_set(env, jwks, dynamo, 
     assert [k["kid"] for k in stored["keys"]] == ["kid-a"]  # nosec B101
 
 
+async def test_a_host_younger_than_the_write_interval_still_snapshots(
+    env, jwks, dynamo, signer, monkeypatch
+):
+    """time.monotonic() counts from the host's boot. A fresh Lambda environment or CI runner
+    is minutes old, and the first write must not wait for the clock to pass the interval."""
+    monkeypatch.setattr(jwks_store.time, "monotonic", lambda: 12.0)
+
+    await broker._verify_with_snapshot_rescue(signer.mint(), load_config(), None)
+
+    assert dynamo.puts == 1  # nosec B101
+    assert SNAPSHOT_KEY in dynamo.items  # nosec B101
+
+
 async def test_rescues_a_genuine_token_when_retrieval_fails(env, jwks, dynamo, signer, caplog):
     dynamo.seed(GITHUB_ISSUER, [signer.jwk])
     jwks.status = 525  # the real #147 failure
