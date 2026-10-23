@@ -1,6 +1,7 @@
 # Releasing a versioned application suite
 
-<!-- sources: action.yml, scripts/collect-suite-release-notes.sh, scripts/render-suite-changelog.sh -->
+<!-- sources: action.yml, scripts/collect-suite-release-notes.sh,
+     scripts/render-suite-changelog.sh -->
 
 A suite repository can select the image versions of several applications without
 building those applications. Diatreme tags that selection, combines their published
