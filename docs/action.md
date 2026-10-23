@@ -119,6 +119,113 @@ jobs:
 
 `version-override` still names the image when it is set, on any event.
 
+## Preview environments for pull requests
+
+GitOps preview controllers render one deploy per pull request head commit: Flux Operator's
+`ResourceSetInputProvider` (type `GitHubPullRequest`) exports a pull request's `id` and head
+`sha`, and Argo CD's pull request generator its `number` and `head_sha`. `pr-<N>` is overwritten
+on every push, so a deploy pinned to it never rolls. Two opt-in inputs give those controllers a
+tag per commit and a way to wait for it:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]   # never labeled or unlabeled, see below
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write   # image-building-label
+    steps:
+      - uses: MagmaMoose/diatreme@v2
+        id: ci
+        with:
+          mode: ci
+          image-commit-tag: true
+          image-building-label: deploy/preview-building
+      - run: echo "Built ${{ steps.ci.outputs.image-commit-tag }}"   # pr-12-1a2b3c4
+```
+
+- **`image-commit-tag`** also pushes the pull request's image as `pr-<N>-<sha7>`, the first
+  seven characters of the pull request's **head** commit. Not `github.sha`: on a pull request
+  that is the merge commit `actions/checkout` builds, which no controller knows. The tag goes
+  out in the same push as `pr-<N>`, so both name one image, and `mode: release` still promotes
+  `pr-<N>`. A pull request whose build is skipped (a deploy-only change, see
+  [Deploying by pull request](#deploying-by-pull-request)) gets the tag by retagging its
+  `pr-<N>`. With no `pr-<N>` yet there is no image to tag, and the run warns.
+- **`image-building-label`** is on the pull request while its images build. Diatreme adds it
+  before the build and removes it once every tag, the commit tag included, is pushed. A run
+  that fails or is cancelled leaves it on. Label changes use the token Diatreme already
+  resolves (`github-token`, or the App token) and need `pull-requests: write`. A failed one
+  only warns: a pull request from a fork gets a read-only `GITHUB_TOKEN`, so it builds without
+  the label.
+
+The provider picks up pull requests labelled `deploy/preview`, and holds each one on its last
+exported commit while the building label is on:
+
+```yaml
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: app-pull-requests
+  namespace: app-preview
+spec:
+  type: GitHubPullRequest
+  url: https://github.com/org/app
+  secretRef:
+    name: github-auth
+  filter:
+    labels:
+      - deploy/preview
+  skip:
+    labels:
+      - deploy/preview-building
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: app-previews
+  namespace: app-preview
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      name: app-pull-requests
+  resources:
+    - apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: app-pr-<< inputs.id >>
+        namespace: app-preview
+      spec:
+        selector:
+          matchLabels:
+            app: app-pr-<< inputs.id >>
+        template:
+          metadata:
+            labels:
+              app: app-pr-<< inputs.id >>
+          spec:
+            containers:
+              - name: app
+                image: ghcr.io/org/app:pr-<< inputs.id >>-<< inputs.sha | trunc 7 >>
+```
+
+After a push the provider sees the new head while the label is on, and keeps exporting the
+previous commit, so the preview stays on an image that exists. A pull request it has not
+exported yet waits for its first build. With Argo CD's pull request generator, the same tag is
+`pr-{{.number}}-{{.head_short_sha_7}}`.
+
+!!! warning "Keep `labeled` and `unlabeled` out of the ci trigger"
+    A label changed with an App token starts workflows (one changed with `GITHUB_TOKEN` does
+    not). A ci workflow that runs on `labeled` or `unlabeled` is then started again by
+    Diatreme's own label change, one extra build each time. It cannot loop, because a run that
+    the label started does not add it again. The default `pull_request` types are the right
+    ones.
+
 ## Image scanning and SBOMs
 
 With `image-scan: 'true'`, Diatreme scans the assembled image with Trivy — the

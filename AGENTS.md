@@ -89,6 +89,12 @@ npm run check   # typecheck + tests + wrangler dry-run
   uploaders. Reporting is visibility-first (non-blocking unless
   `image-scan-gate`); sinks are failure-isolated; a scanner that cannot run is a
   build error, not a finding.
+- `image-commit-tag` (opt-in, `mode: ci` on pull requests) also pushes `pr-<N>-<sha7>`
+  of the PR head (`github.event.pull_request.head.sha`, never the merge commit) in the
+  same push as `pr-<N>`; a build skipped by `deploy-paths` retags `pr-<N>` instead
+  (`scripts/retag-commit-image.sh`). `image-building-label` goes on before the build
+  and comes off in the last ci step, after every push, so a failed or cancelled run
+  leaves it on (`scripts/pr-building-label.sh`, which only ever warns).
 - `issue-reference` (opt-in, `mode: ci` on pull requests) fails a PR whose title
   and/or non-merge commits reference no issue; `scripts/check-issue-reference.sh`
   reads the commits from the local checkout, so it needs no extra token scope.
