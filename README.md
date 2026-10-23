@@ -99,7 +99,7 @@ All 108 inputs and every output →
 | | |
 | --- | --- |
 | [Setup](https://docs.magmamoose.com/diatreme/setup/) | Install the App, wire the workflow, develop locally |
-| [Using the action](https://docs.magmamoose.com/diatreme/action/) | Modes, Docker builds, image scanning, signing, publishing packages |
+| [Using the action](https://docs.magmamoose.com/diatreme/action/) · [Versioned suites](https://docs.magmamoose.com/diatreme/how-to/release-a-versioned-suite/) | Modes, Docker builds, image scanning, signing, publishing packages, suite release notes |
 | [Action reference](https://docs.magmamoose.com/diatreme/reference/action/) | Every input and output, generated from `action.yml` |
 | [Architecture](https://docs.magmamoose.com/diatreme/architecture/) · [Broker](https://docs.magmamoose.com/diatreme/worker/) | How it works, and the hosted broker behind it |
 | [Errors](https://docs.magmamoose.com/diatreme/reference/errors/) · [Limits](https://docs.magmamoose.com/diatreme/reference/limits/) | What went wrong, and what it will not do |
@@ -118,9 +118,3 @@ Pin `@v2` for the floating major, or a tag or SHA to freeze.
 
 [Report a vulnerability](SECURITY.md) · [Contributing](CONTRIBUTING.md) ·
 MIT, see [LICENSE](LICENSE).
-
-### Suite release notes
-
-For a version-only repository, set `suite-manifest`, `suite-catalog` and `version-override`. The manifest holds Kustomize `images/newTag` selections; the catalog maps each image to an application repository. Diatreme reads published application release notes, collects every intervening release on the selected channel, and writes `CHANGELOG.md` plus `suite/status.json` in one GitHub-signed commit. It attaches `release.json` to the suite GitHub Release.
-
-Use a token with read access to the application repositories and contents write access to the suite repository. Suite mode does not build application images. Missing published releases or empty release notes fail before tagging. A rerun resumes a tag on the same commit; a changed selection or historical status fails instead of overwriting newer release data.
