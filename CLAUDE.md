@@ -2,7 +2,9 @@
 
 Release/deployment orchestrator. Two surfaces, talking over HTTP, neither importing
 the other: a Marketplace **composite action** (`action.yml` + `scripts/*.sh`, bash,
-bats) and the **hosted GitHub-App broker** it calls (`worker/`, TypeScript, vitest).
+bats) and the **hosted GitHub-App broker** it calls (`broker/app/`, Python/Lambda).
+The Cloudflare Worker (`worker/`, TypeScript) is retired (2026-08-20) but stays as a
+rollback target; its CI still validates TypeScript and guards wire-contract behaviour.
 Consumers pin by SHA, so action inputs and broker wire responses are frozen API
 surface — changing one breaks repos nobody can reach. `AGENTS.md` is canonical for
 contributor rules; edit it and this file together.
@@ -16,7 +18,8 @@ contributor rules; edit it and this file together.
 - **Before locating unfamiliar code, read `./PROJECT_INDEX.json`** (modules,
   callgraph, hotspots) instead of grepping blind.
 - `AGENTS.md` = editing rules + local validation. `README.md` = Marketplace guide.
-  `worker/README.md` = broker endpoints/config.
+  `worker/README.md` = retired Worker reference (endpoints/config of record).
+  Active broker: `broker/app/` (Python/Lambda).
 - Cloudflare, AWS, DNS or a hostname: read `.claude/INFRA_NOTES.md` first.
 - `.claude/*.md` = terse agent context, unpublished. `./docs` = human docs, published.
 - Load `.claude/decisions/` and `.claude/sessions/` ONLY when the task relates to
