@@ -1,7 +1,7 @@
 # Security
 
-<!-- sources: SECURITY.md, broker/app, worker/src/index.ts, worker/wrangler.jsonc, scripts/request-public-
-     app-token.sh
+<!-- sources: SECURITY.md, broker/app, worker/src/index.ts, worker/wrangler.jsonc,
+     scripts/request-public-app-token.sh
      -->
 
 Diatreme holds a GitHub App private key and mints short-lived, write-scoped
@@ -33,7 +33,7 @@ Self-hosted deployments can narrow further with
 Minted tokens carry `contents: write` and `pull_requests: write` by default, and
 are scoped to a single repository. They inherit GitHub's lifetime, currently one
 hour. A deployment can narrow the permission set with
-[`TOKEN_PERMISSIONS`](reference/configuration.md#token_permissions), but nothing
+[`TOKEN_PERMISSIONS_JSON`](reference/configuration.md#token_permissions_json), but nothing
 can widen a token past what the App itself was granted at install time.
 
 The action masks the token with `::add-mask::` the moment it arrives, so it's

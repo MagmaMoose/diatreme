@@ -1,8 +1,8 @@
 # Errors
 
-<!-- sources: broker/app, worker/src/index.ts, scripts/request-public-app-token.sh, scripts/detect-
-     versioning-tool.sh, scripts/build-image-dockerfile.sh, scripts/resolve-promote-from.sh,
-     scripts/verify-promote-from-images.sh, action.yml
+<!-- sources: broker/app, worker/src/index.ts, scripts/request-public-app-token.sh,
+     scripts/detect-versioning-tool.sh, scripts/build-image-dockerfile.sh,
+     scripts/resolve-promote-from.sh, scripts/verify-promote-from-images.sh, action.yml
      -->
 
 Every failure a Diatreme run can surface, what causes it, and what to do. The
