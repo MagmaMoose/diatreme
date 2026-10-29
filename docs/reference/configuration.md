@@ -1,7 +1,8 @@
 # Broker configuration
 
-<!-- sources: broker/app, broker/scripts/build_lambda_zip.py, worker/src/index.ts, worker/wrangler.jsonc,
-     worker/.dev.vars.example, .github/workflows/deploy-worker.yaml
+<!-- sources: broker/app/config.py, broker/app/ssm.py, broker/app/broker.py,
+     worker/src/index.ts, worker/wrangler.jsonc, worker/.dev.vars.example,
+     .github/workflows/deploy-worker.yaml
      -->
 
 Everything the broker reads at runtime. You only need this page if you self-host
@@ -13,18 +14,27 @@ All of these are read per request from the runtime environment, so changing one
 takes effect on the next request after a redeploy. None of them are read from a
 file at boot.
 
-On Cloudflare, secrets are set with `wrangler secret put <NAME>` and the KV
-namespaces are bound at deploy time. On AWS they come from SSM Parameter Store
-and the Lambda environment. See [Deployment](../operations/deployment.md).
+The **Python/Lambda broker** (production) reads environment variables whose names
+come from its `BrokerConfig` field names uppercased (`app_id` → `APP_ID`). On
+Lambda those values arrive as function environment variables; secrets come from
+SSM Parameter Store under `SECRET_PATH` and overlay the environment on top (see
+[`SECRET_PATH`](#secret_path) below). The **Cloudflare Worker** (rollback target)
+uses different names for some of the same settings. Where they differ, both names
+are shown.
 
 ## Required
 
-| Name | Type | Default | Secret | Effect |
-| --- | --- | --- | --- | --- |
-| `GITHUB_APP_ID` | string | none | no | Numeric App ID of the github.com GitHub App the broker acts as. Without it, `/token` and `/sign` cannot mint anything and `/releases` returns `503 app_unconfigured`. |
-| `GITHUB_APP_PRIVATE_KEY` | string (PEM) | none | yes | The App's private key. Accepts a real multi-line PEM or a single line with literal `\n` escapes. |
+| Name (Lambda / Worker) | Type | Secret | Effect |
+| --- | --- | --- | --- |
+| `APP_ID` / `GITHUB_APP_ID` | string | no | Numeric App ID of the github.com GitHub App the broker acts as. Without it, `/token` returns `503 config_unavailable`. On the Worker, absence also makes `/sign` and `/releases` fail. |
+| `PRIVATE_KEY` / `GITHUB_APP_PRIVATE_KEY` | string (PEM) | yes | The App's private key. Accepts a real multi-line PEM or a single line with literal `\n` escapes. |
 
 ```text
+# Python/Lambda broker
+APP_ID=<your-app-id>
+PRIVATE_KEY=<your-app-private-key-pem>
+
+# Cloudflare Worker (rollback target)
 GITHUB_APP_ID=<your-app-id>
 GITHUB_APP_PRIVATE_KEY=<your-app-private-key-pem>
 ```
@@ -69,19 +79,20 @@ Matching is exact string equality after trimming. There's no globbing, so
 `MagmaMoose/*` matches nothing. A repository outside the list gets
 `403 repo_not_allowed`.
 
-### `TOKEN_PERMISSIONS`
+### `TOKEN_PERMISSIONS_JSON`
 
-Permissions stamped on the installation tokens `/token` mints.
+Permissions stamped on the installation tokens `/token` mints. (The Cloudflare
+Worker read this from `TOKEN_PERMISSIONS`; the Python/Lambda broker reads it from
+`TOKEN_PERMISSIONS_JSON`.)
 
 | | |
 | --- | --- |
-| Type | JSON object, or a comma-separated `key=value` / `key:value` list |
-| Default | `contents: write`, `pull_requests: write` |
+| Type | JSON object |
+| Default | `{"contents": "write", "pull_requests": "write"}` |
 | Secret | no |
 
 ```text
-TOKEN_PERMISSIONS={"contents":"write","pull_requests":"write","packages":"write"}
-TOKEN_PERMISSIONS=contents=write,pull_requests=write
+TOKEN_PERMISSIONS_JSON={"contents":"write","pull_requests":"write","packages":"write"}
 ```
 
 Keys must be lowercase with underscores, matching GitHub's App permission names.
@@ -111,10 +122,10 @@ Unset means both routes return `503` (`sign_disabled`, `releases_disabled`) and
 neither can be reached. Compared in constant time. The hosted broker sets it;
 a self-hosted broker that only needs `/token` can leave it out.
 
-### `GITHUB_WEBHOOK_SECRET`
+### `GITHUB_WEBHOOK_SECRET` (Cloudflare Worker only)
 
 HMAC-SHA256 secret for `POST /webhook`, matching the secret configured on the
-GitHub App.
+GitHub App. Not read by the Python/Lambda broker.
 
 | | |
 | --- | --- |
@@ -124,9 +135,10 @@ GitHub App.
 
 Unset means `/webhook` returns `503 webhook_disabled`.
 
-### `AUTO_UPDATE_BRANCHES`
+### `AUTO_UPDATE_BRANCHES` (Cloudflare Worker only)
 
-Enables the push auto-update behaviour behind `/webhook`.
+Enables the push auto-update behaviour behind `/webhook`. Not read by the
+Python/Lambda broker.
 
 | | |
 | --- | --- |
@@ -144,17 +156,56 @@ All five are opt-in and only meaningful together. Setting `GHE_OIDC_ISSUER` is
 what turns GHE support on: `/token` then trusts two issuers instead of one, and
 mints against whichever one actually signed the token.
 
-| Name | Required for GHE | Secret | Effect |
+The Python/Lambda broker and the Cloudflare Worker use different names for the
+GHE App credentials. Both sets are shown.
+
+| Name (Lambda / Worker) | Required for GHE | Secret | Effect |
 | --- | --- | --- | --- |
-| `GHE_OIDC_ISSUER` | yes | no | The tenant's OIDC issuer, for example `https://token.actions.example.ghe.com`. Trailing slashes and stray whitespace are stripped. |
-| `GHE_API_BASE` | yes | no | The tenant's REST base, for example `https://example.ghe.com/api/v3`. |
-| `GHE_GITHUB_APP_ID` | yes | no | App ID of the duplicate App registered on the tenant. |
-| `GHE_GITHUB_APP_PRIVATE_KEY` | yes | yes | That App's private key. |
-| `GHE_GITHUB_APP_INSTALLATION_ID` | no | no | Skips the per-repo installation lookup, saving one API call. Ignored unless it parses to a positive integer. |
+| `GHE_OIDC_ISSUER` (both) | yes | no | The tenant's OIDC issuer, for example `https://token.actions.example.ghe.com`. Trailing slashes and stray whitespace are stripped. |
+| `GHE_API_BASE` (both) | yes | no | The tenant's REST base, for example `https://example.ghe.com/api/v3`. |
+| `GHE_APP_ID` / `GHE_GITHUB_APP_ID` | yes | no | App ID of the duplicate App registered on the tenant. |
+| `GHE_PRIVATE_KEY` / `GHE_GITHUB_APP_PRIVATE_KEY` | yes | yes | That App's private key. |
+| `GHE_INSTALLATION_ID` / `GHE_GITHUB_APP_INSTALLATION_ID` | no | no | Skips the per-repo installation lookup, saving one API call. Ignored unless it parses to a positive integer. |
 
 A github.com token is still verified against github.com and minted with the
 github.com App. The issuer is pinned before its key set is selected, so a forged
 `iss` can't make the broker verify against the wrong tenant's keys.
+
+## AWS Lambda only
+
+### `JWKS_TABLE_NAME`
+
+Name of the DynamoDB table that holds last-known-good JWKS snapshots, one row
+per trusted issuer.
+
+| | |
+| --- | --- |
+| Type | string |
+| Default | unset |
+| Secret | no |
+
+Unset disables the snapshot rescue path entirely: if the live JWKS fetch fails,
+the broker returns `503 oidc_key_fetch_failed` with no fallback. Set it to enable
+degraded-mode verification during GitHub JWKS outages. See [The broker](../worker.md#surviving-a-jwks-outage) for
+how the rescue path works.
+
+### `SECRET_PATH`
+
+SSM Parameter Store path prefix from which the broker loads its secrets on Lambda.
+
+| | |
+| --- | --- |
+| Type | string |
+| Default | unset |
+| Secret | no |
+
+When set, the broker calls `GetParametersByPath` on this prefix and overlays the
+results on top of the function's environment variables. Parameter basenames are
+converted from kebab-case to snake_case and matched against `BrokerConfig` field
+names, so `/diatreme/prod/private-key` lands on `PRIVATE_KEY`. The SSM overlay
+wins over the environment, so a leaked env var can't beat Parameter Store.
+
+Unset means no SSM lookup: every setting must arrive in the Lambda environment.
 
 ## KV namespaces (Cloudflare only)
 
@@ -185,15 +236,20 @@ repository. Set neither and the injection step is skipped entirely.
 
 ## Local development
 
-Copy the example and fill it in:
+**Python/Lambda broker:** set the variables above as process environment variables
+before running `uvicorn app.main:app` (the FastAPI dev shell). `SECRET_PATH` is
+unset locally, so every setting must be in the environment. No `.dev.vars` file is
+involved.
+
+**Cloudflare Worker:** copy the example and fill it in:
 
 ```bash
 cp worker/.dev.vars.example worker/.dev.vars
 ```
 
 `.dev.vars` is gitignored. `wrangler dev` reads it. The example file covers the
-App credentials and the GHE block; add any of the optional variables above by
-hand if you're working on those paths.
+Worker App credentials and the GHE block; use the Worker variable names
+(`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, etc.) in that file.
 
 ## Related
 

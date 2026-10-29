@@ -65,7 +65,7 @@ curl -sS -X POST https://api.diatreme.magmamoose.com/token \
 
 The token is a GitHub App installation token scoped to that one repository. Its
 permissions default to `contents: write` and `pull_requests: write`, overridable
-per deployment with [`TOKEN_PERMISSIONS`](configuration.md#token_permissions).
+per deployment with [`TOKEN_PERMISSIONS_JSON`](configuration.md#token_permissions_json).
 GitHub sets the lifetime, currently one hour, and the broker passes
 `expires_at` through unchanged rather than computing it.
 
@@ -79,7 +79,7 @@ The action masks the token in the run log and writes it to the step outputs
 | 400 | `invalid_json` | Body isn't parseable JSON. |
 | 400 | `invalid_request` | Body parsed but isn't a JSON object. |
 | 400 | `missing_required_fields` | One of `oidcToken`, `owner`, `repo` is absent or empty. |
-| 400 | `invalid_token_permissions` | The deployment's `TOKEN_PERMISSIONS` is set but parses to nothing usable. A broker misconfiguration, not a caller error. |
+| 400 | `invalid_token_permissions` | The deployment's `TOKEN_PERMISSIONS_JSON` is set but parses to nothing usable. A broker misconfiguration, not a caller error. |
 | 401 | `invalid_oidc_token` | The token failed verification. Carries a `reason`. |
 | 403 | `repo_mismatch` | The token's `repository` claim isn't `owner/repo`. |
 | 403 | `repo_not_allowed` | The repository is outside the deployment's `ALLOWED_REPOSITORIES`. |
