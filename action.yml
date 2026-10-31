@@ -1819,7 +1819,7 @@ runs:
 
     - name: Log in to container registry (CI)
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && (steps.deploy-only.outputs.deploy_only != 'true' || inputs.image-commit-tag == 'true')
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -2344,7 +2344,7 @@ runs:
     # three cannot drift apart.
     - name: Log in to container registry (promote preflight)
       if: inputs.mode == 'release' && steps.promote-source.outputs.source_tag != '' && steps.resolve-image.outputs.image_name != ''
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -2551,7 +2551,7 @@ runs:
     - name: Set up Python (semantic-release-python)
       id: psr-python
       if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'semantic-release-python'
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.13'
         update-environment: false
@@ -2848,7 +2848,7 @@ runs:
     - name: Set up Python for suite release notes
       id: suite-python
       if: inputs.mode == 'release' && inputs.suite-manifest != ''
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.13'
         update-environment: false
@@ -3102,7 +3102,7 @@ runs:
     # A promotion logged in already, for its preflight, before the tag was cut.
     - name: Log in to container registry (release)
       if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && steps.promote-source.outputs.source_tag == ''
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -3678,7 +3678,7 @@ runs:
         inputs.publish-package == 'true' &&
         inputs.package-ecosystem == 'pip' &&
         steps.normalize.outputs.released == 'true'
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -3709,7 +3709,7 @@ runs:
         inputs.publish-package == 'true' &&
         inputs.package-ecosystem == 'rubygems' &&
         steps.normalize.outputs.released == 'true'
-      uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+      uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
       with:
         ruby-version: ${{ inputs.ruby-version }}
 
