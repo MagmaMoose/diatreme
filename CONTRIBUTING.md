@@ -7,7 +7,8 @@ boundary, editing rules) is [`AGENTS.md`](AGENTS.md).
 | Surface | Path | Toolchain |
 | --- | --- | --- |
 | Composite action (Marketplace) | `action.yml` + `scripts/*.sh` | Bash, `actionlint`, `shellcheck`, `bats` |
-| Cloudflare Worker (backend) | `worker/` | TypeScript, `wrangler`, `vitest` |
+| Python/Lambda broker (active) | `broker/app/` | Python, `pytest`, AWS Lambda + API Gateway |
+| Cloudflare Worker (rollback target) | `worker/` | TypeScript, `wrangler`, `vitest` |
 
 ## Local validation
 
@@ -24,9 +25,18 @@ bats tests/bats
 > system Ruby (2.6, missing `YAML.safe_load_file`). That is a local-only false
 > failure, **CI is the source of truth** and runs the full suite green.
 
-**Worker surface (`cd worker/`):**
+**Broker surface (active):**
 
 ```bash
+cd broker
+pip install -r requirements-dev.txt
+pytest
+```
+
+**Worker surface (rollback target, kept deployable but not serving traffic):**
+
+```bash
+cd worker
 npm ci
 npm run check     # typecheck + vitest + wrangler dry-run
 ```
