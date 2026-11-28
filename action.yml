@@ -1555,7 +1555,7 @@ runs:
           inputs.app-id != '' &&
           inputs.app-private-key != ''
         )
-      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
       with:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
@@ -1819,7 +1819,7 @@ runs:
 
     - name: Log in to container registry (CI)
       if: inputs.mode == 'ci' && steps.resolve-image.outputs.image_name != '' && (steps.deploy-only.outputs.deploy_only != 'true' || inputs.image-commit-tag == 'true')
-      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -2344,7 +2344,7 @@ runs:
     # three cannot drift apart.
     - name: Log in to container registry (promote preflight)
       if: inputs.mode == 'release' && steps.promote-source.outputs.source_tag != '' && steps.resolve-image.outputs.image_name != ''
-      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -2752,14 +2752,14 @@ runs:
 
     - name: Install GitVersion
       if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'gitversion'
-      uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+      uses: gittools/actions/gitversion/setup@389fe43e6b0189b98c40c43553070ac029304635 # v5.0.0
       with:
         versionSpec: ${{ inputs.gitversion-spec }}
 
     - name: Execute GitVersion
       id: gitversion
       if: inputs.mode == 'release' && steps.release-version.outputs.version == '' && steps.resolve-tool.outputs.tool == 'gitversion'
-      uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+      uses: gittools/actions/gitversion/execute@389fe43e6b0189b98c40c43553070ac029304635 # v5.0.0
       with:
         # Resolved by the detect step rather than read from the raw input,
         # because this action never sets `targetPath` — gittools therefore
@@ -3102,7 +3102,7 @@ runs:
     # A promotion logged in already, for its preflight, before the tag was cut.
     - name: Log in to container registry (release)
       if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && steps.promote-source.outputs.source_tag == ''
-      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
       with:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username || github.actor }}
@@ -3578,7 +3578,7 @@ runs:
 
     - name: Install cosign
       if: inputs.mode == 'release' && steps.resolve-image.outputs.image_name != '' && steps.normalize.outputs.released == 'true' && inputs.image-sign == 'true'
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
     - name: Sign released images (cosign)
       id: sign-image
@@ -3668,7 +3668,7 @@ runs:
         inputs.publish-package == 'true' &&
         inputs.package-ecosystem == 'nuget' &&
         steps.normalize.outputs.released == 'true'
-      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
 
@@ -3698,7 +3698,7 @@ runs:
         inputs.publish-package == 'true' &&
         (inputs.package-ecosystem == 'maven' || inputs.package-ecosystem == 'gradle') &&
         steps.normalize.outputs.released == 'true'
-      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
       with:
         distribution: ${{ inputs.java-distribution }}
         java-version: ${{ inputs.java-version }}
@@ -3709,7 +3709,7 @@ runs:
         inputs.publish-package == 'true' &&
         inputs.package-ecosystem == 'rubygems' &&
         steps.normalize.outputs.released == 'true'
-      uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+      uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
       with:
         ruby-version: ${{ inputs.ruby-version }}
 
@@ -3724,7 +3724,7 @@ runs:
         inputs.package-ecosystem == 'helm' &&
         inputs.helm-sign == 'true' &&
         steps.normalize.outputs.released == 'true'
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
     - name: Install ORAS (Artifact Hub metadata)
       if: |
@@ -3733,7 +3733,7 @@ runs:
         inputs.package-ecosystem == 'helm' &&
         inputs.artifacthub-repo-file != '' &&
         steps.normalize.outputs.released == 'true'
-      uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+      uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
 
     - name: Publish package
       id: publish-package
